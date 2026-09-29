@@ -1,0 +1,12 @@
+{
+  "name": "ghost-talk-signaling",
+  "version": "1.0.0",
+  "description": "Zero-log ephemeral WebSocket signaling for Ghost Talk",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

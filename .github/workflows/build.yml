@@ -26,10 +26,11 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Install dependencies and sync Capacitor
-        run: |
-          npm install
-          npx cap sync android
+      - name: Install dependencies
+        run: npm install
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3

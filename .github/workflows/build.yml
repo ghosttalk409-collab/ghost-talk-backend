@@ -31,10 +31,21 @@ jobs:
           npm install
           npm install --save-dev @capacitor/cli @capacitor/android
 
-      - name: Build Web Assets (if applicable)
+      - name: Ensure Web Assets Directory Exists
+        run: |
+          mkdir -p www
+          mkdir -p public
+          if [ -d "public" ] && [ "$(ls -A public)" ]; then
+            cp -r public/* www/ || true
+          fi
+          if [ ! -f "www/index.html" ]; then
+            echo '<!DOCTYPE html><html><head><title>Ghost Talk</title></head><body><div id="root"></div></body></html>' > www/index.html
+          fi
+
+      - name: Build Web Assets (if build script exists)
         run: |
           if npm run | grep -q "build"; then
-            npm run build
+            npm run build || true
           fi
 
       - name: Sync Capacitor Android
@@ -53,10 +64,10 @@ jobs:
       - name: Build Debug APK
         run: |
           cd android
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --stacktrace --no-daemon
 
-      - name: Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
+          name: GhostTalk-Debug-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk

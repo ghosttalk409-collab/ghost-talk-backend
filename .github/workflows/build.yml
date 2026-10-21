@@ -26,8 +26,16 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install Dependencies & Capacitor CLI
+        run: |
+          npm install
+          npm install --save-dev @capacitor/cli @capacitor/android
+
+      - name: Build Web Assets (if applicable)
+        run: |
+          if npm run | grep -q "build"; then
+            npm run build
+          fi
 
       - name: Sync Capacitor Android
         run: npx cap sync android

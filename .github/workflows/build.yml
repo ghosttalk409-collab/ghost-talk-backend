@@ -42,7 +42,7 @@ jobs:
             echo '<!DOCTYPE html><html><head><title>Ghost Talk</title></head><body><div id="root"></div></body></html>' > www/index.html
           fi
 
-      - name: Build Web Assets (if build script exists)
+      - name: Build Web Assets (если build script exists)
         run: |
           if npm run | grep -q "build"; then
             npm run build || true
@@ -54,9 +54,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Create local.properties
+      - name: Create local.properties and fix Proguard property
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
+          echo "android.r8.proguardAndroidTxt.disallowed=false" >> android/gradle.properties
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew

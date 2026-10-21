@@ -1,0 +1,8 @@
+{
+  "appId": "com.ghosttalk.app",
+  "appName": "Ghost Talk",
+  "webDir": "public",
+  "android": {
+    "webContentsDebuggingEnabled": false
+  }
+}

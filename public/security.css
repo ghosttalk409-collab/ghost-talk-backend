@@ -1,0 +1,30 @@
+/* Privacy blur when switching apps */
+body.privacy-blur #video-container {
+  filter: blur(25px) brightness(0.2);
+  transition: filter 0.1s ease-in-out;
+}
+
+/* Security Notification Banner */
+.security-toast {
+  position: fixed;
+  top: 15px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-100px);
+  width: 90%;
+  max-width: 320px;
+  text-align: center;
+  background: rgba(15, 23, 42, 0.95);
+  color: #00ff66;
+  border: 1px solid #00ff66;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 11px;
+  box-shadow: 0 0 15px rgba(0, 255, 102, 0.2);
+  z-index: 99999;
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.security-toast.visible {
+  transform: translateX(-50%) translateY(0);
+}

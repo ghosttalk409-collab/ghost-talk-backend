@@ -1,0 +1,16 @@
+{
+  "short_name": "Ghost Talk",
+  "name": "Ghost Talk - Ephemeral Encrypted Communication",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/564/564883.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#121212",
+  "theme_color": "#121212",
+  "display": "standalone",
+  "orientation": "portrait"
+}

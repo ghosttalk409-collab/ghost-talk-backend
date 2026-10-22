@@ -147,10 +147,12 @@ if (!savedKey) {
   }
 
   function initWebSocket() {
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    
-    // Explicitly target port 8158 where your Node server is live
-    const socketUrl = isLocal 
+    // Detect local browser vs mobile webview container
+    const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
+                           && !window.Capacitor;
+
+    // Use local port for local Acode browser testing, otherwise connect to live cloud backend for APK
+    const socketUrl = isLocalBrowser 
       ? 'ws://127.0.0.1:8158' 
       : 'wss://ghost-talk-backend.onrender.com';
 

@@ -80,11 +80,11 @@ document.addEventListener('DOMContentLoaded', () => {
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
   };
 
-  let savedKey = sessionStorage.getItem('ghost_identity');
-  if (!savedKey) {
-    savedKey = 'GHOST-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-    sessionStorage.setItem('ghost_identity', savedKey);
-  }
+  let savedKey = localStorage.getItem('ghost_identity');
+if (!savedKey) {
+  savedKey = 'GHOST-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+  localStorage.setItem('ghost_identity', savedKey);
+}
   myIdentity = savedKey;
   if (myIdentityInput) myIdentityInput.value = myIdentity;
 
@@ -147,8 +147,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function initWebSocket() {
-    const socket = new WebSocket('wss://ghost-talk-backend.onrender.com');
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    
+    // Explicitly target port 8158 where your Node server is live
+    const socketUrl = isLocal 
+      ? 'ws://127.0.0.1:8158' 
+      : 'wss://ghost-talk-backend.onrender.com';
 
+    socket = new WebSocket(socketUrl);
 
     socket.onopen = () => {
       statusBar.innerText = 'STATUS: ONLINE | SECURED';
@@ -566,15 +572,13 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-
-
   if (btnSaveCustomKey) {
     btnSaveCustomKey.onclick = () => {
       if (!isPremiumUser) return;
       const desiredKey = customKeyInput.value.trim().toUpperCase();
       if (!desiredKey || desiredKey.length < 3) { alert('Enter valid custom key.'); return; }
       myIdentity = desiredKey.startsWith('GHOST-') ? desiredKey : `GHOST-${desiredKey}`;
-      sessionStorage.setItem('ghost_identity', myIdentity);
+      localStorage.setItem('ghost_identity', myIdentity);
       if (myIdentityInput) myIdentityInput.value = myIdentity;
       if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'register', key: myIdentity }));

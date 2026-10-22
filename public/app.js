@@ -146,12 +146,12 @@ if (!savedKey) {
     return ramContacts.some(c => c.key === key);
   }
 
-  function initWebSocket() {
-    // Detect local browser vs mobile webview container
+      function initWebSocket() {
+    // Automatically uses local port ONLY if you are testing in your local Acode browser.
+    // For anyone else downloading the APK or visiting the website, it uses your public cloud backend!
     const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
-                           && !window.Capacitor;
+                           && window.location.port === '8158';
 
-    // Use local port for local Acode browser testing, otherwise connect to live cloud backend for APK
     const socketUrl = isLocalBrowser 
       ? 'ws://127.0.0.1:8158' 
       : 'wss://ghost-talk-backend.onrender.com';

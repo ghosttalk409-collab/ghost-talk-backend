@@ -61,12 +61,131 @@ setInterval(() => {
   });
 }, 60000);
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   let currentKey = null;
+  console.log('🌐 New peer connection established from IP.');
 
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
+
+      // --- ADMIN CHANNEL AUTHENTICATION & COMMANDS ---
+      if (data.type === 'admin-auth') {
+        if (data.secret === 'GHOST-ADMIN-PASS-2026') {
+          adminWs = ws;
+          currentKey = 'ADMIN-ROOT';
+          clients.set(currentKey, ws);
+          ws.send(JSON.stringify({ 
+            type: 'admin-authenticated', 
+            pricing: planPricing 
+          }));
+          broadcastAdminMetrics();
+        } else {
+          ws.send(JSON.stringify({ type: 'admin-error', message: 'Unauthorized Passphrase.' }));
+        }
+        return;
+      }
+
+      if (data.type === 'admin-set-tier') {
+        if (ws === adminWs) {
+          clientTiers.set(data.targetKey, data.tier);
+          clientExpirations.delete(data.targetKey);
+          broadcastAdminMetrics();
+          if (clients.has(data.targetKey)) {
+            clients.get(data.targetKey).send(JSON.stringify({ type: 'tier-updated', tier: data.tier }));
+          }
+        }
+        return;
+      }
+
+      if (data.type === 'admin-update-pricing') {
+        if (ws === adminWs && data.pricing) {
+          planPricing = { ...data.pricing };
+          broadcastAdminMetrics();
+        }
+        return;
+      }
+
+      if (data.type === 'admin-kick') {
+        if (ws === adminWs && clients.has(data.targetKey)) {
+          const target = clients.get(data.targetKey);
+          target.send(JSON.stringify({ type: 'end-session' }));
+          target.close();
+          clients.delete(data.targetKey);
+          clientTiers.delete(data.targetKey);
+          clientExpirations.delete(data.targetKey);
+          broadcastAdminMetrics();
+        }
+        return;
+      }
+
+      if (data.type === 'admin-wipe-ram') {
+        if (ws === adminWs) {
+          clients.forEach((clientWs, key) => {
+            if (key !== 'ADMIN-ROOT') {
+              clientWs.send(JSON.stringify({ type: 'end-session' }));
+              clientWs.close();
+            }
+          });
+          clients.clear();
+          clientTiers.clear();
+          clientExpirations.clear();
+          clients.set('ADMIN-ROOT', adminWs);
+          broadcastAdminMetrics();
+        }
+        return;
+      }
+
+      // --- GHOST TALK CORE ROUTING (FIXED FOR RENDER MESH) ---
+      if (data.type === 'register') {
+        currentKey = data.key;
+        clients.set(currentKey, ws);
+        if (!clientTiers.has(currentKey)) {
+          clientTiers.set(currentKey, 'FREE');
+        }
+        ws.send(JSON.stringify({ type: 'registered' }));
+        console.log(`✅ Peer Registered: ${currentKey}`);
+        broadcastAdminMetrics();
+      } else if (data.targetKey) {
+        if (clients.has(data.targetKey)) {
+          const targetWs = clients.get(data.targetKey);
+          
+          if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+            if (currentKey === 'ADMIN-ROOT') {
+              data.senderKey = 'ADMIN DASHBOARD';
+            } else {
+              data.senderKey = currentKey;
+            }
+            targetWs.send(JSON.stringify(data));
+          } else {
+            ws.send(JSON.stringify({ 
+              type: 'error', 
+              message: `Target ${data.targetKey} socket is closed.` 
+            }));
+          }
+        } else {
+          ws.send(JSON.stringify({ 
+            type: 'error', 
+            message: `Target ${data.targetKey} is offline or unreachable.` 
+          }));
+        }
+      }
+    } catch (err) {
+      console.error('Signaling error:', err);
+    }
+  });
+
+  ws.on('close', () => {
+    if (currentKey) {
+      clients.delete(currentKey);
+      clientTiers.delete(currentKey);
+      clientExpirations.delete(currentKey);
+      if (currentKey === 'ADMIN-ROOT') adminWs = null;
+      console.log(`❌ Peer Disconnected: ${currentKey}`);
+      broadcastAdminMetrics();
+    }
+  });
+});
 
       // --- ADMIN CHANNEL AUTHENTICATION & COMMANDS ---
       if (data.type === 'admin-auth') {

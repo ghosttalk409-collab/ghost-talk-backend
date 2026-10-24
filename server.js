@@ -248,14 +248,14 @@ app.post('/api/nowpayments-webhook', express.raw({ type: 'application/json' }), 
     res.status(500).send('Error');
   }
 });
-
 app.get('/admin-panel', (req, res) => {
   if (req.query.key === 'GHOST-USB-KEY-999') {
-    res.sendFile(__dirname + '/admin.html');
+    res.sendFile(__dirname + '/public/admin.html');
   } else {
     res.status(404).send('Not Found');
   }
 });
+
 
 const PORT = process.env.PORT || 8158;
 server.listen(PORT, '0.0.0.0', () => {

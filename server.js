@@ -429,11 +429,11 @@ app.get('/admin-panel', (req, res) => {
 });
 
 const PORT = process.env.PORT || 8158;
-// Explicitly bounded loopback server loop to protect mobile local interface
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`--------------------------------------------------`);
-  console.log(`🛡️ Ghost Talk Mesh is live and secured!`);
-  console.log(`> Local App:      http://127.0.0.1:${PORT}`);
-  console.log(`> Admin Panel:    http://127.0.0.1:${PORT}/admin-panel?key=GHOST-USB-KEY-999`);
-  console.log(`--------------------------------------------------`);
+const HOST = '0.0.0.0';
+
+server.listen(PORT, HOST, () => {
+  console.log('--------------------------------------------------');
+  console.log('🛡️ Ghost Talk Mesh is live and secured!');
+  console.log(`> App running on port: ${PORT}`);
+  console.log('--------------------------------------------------');
 });

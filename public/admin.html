@@ -1,13 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ghost Talk - Secure Admin Panel</title>
+  <style>
+    :root { --bg-dark: #0a0d12; --card-bg: #121824; --border-color: #1e293b; --accent-green: #00ff88; --accent-blue: #00bcd4; --accent-red: #ff4757; --text-main: #e2e8f0; --text-muted: #64748b; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', monospace, sans-serif; }
+    body { background: var(--bg-dark); color: var(--text-main); padding: 16px; font-size: 13px; }
+    .header-bar { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); margin-bottom: 16px; }
+    .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 11px; background: rgba(0, 255, 136, 0.1); color: var(--accent-green); border: 1px solid var(--accent-green); }
+    .grid-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .card-title { font-size: 12px; font-weight: bold; color: var(--text-muted); text-transform: uppercase; margin-bottom: 12px; display: flex; justify-content: space-between; }
+    #metricsCanvas { width: 100%; height: 180px; background: #080a0f; border-radius: 6px; border: 1px solid var(--border-color); }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 8px; border-bottom: 1px solid var(--border-color); font-size: 12px; }
+    th { color: var(--text-muted); font-size: 10px; text-transform: uppercase; }
+    .btn { background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-main); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; }
+    .btn:hover { border-color: var(--accent-green); color: var(--accent-green); }
+    .btn-danger { border-color: var(--accent-red); color: var(--accent-red); }
+    .btn-danger:hover { background: var(--accent-red); color: #000; }
+  </style>
+</head>
+<body>
+  <div class="header-bar">
+    <div>
+      <h2 style="color: var(--accent-green);">🛡️ GHOST TALK - SECURE ADMIN MESH</h2>
+      <span style="font-size: 10px; color: var(--text-muted);">USB Air-Gapped Command Interface</span>
+    </div>
+    <div id="connectionStatus" class="status-badge">CONNECTING TO MESH...</div>
+  </div>
+  <div class="grid-layout">
+    <div>
+      <div class="card">
+        <div class="card-title"><span>📈 Real-Time Mesh Telemetry</span><span id="ramUsageText">RAM: 0 MB</span></div>
+        <canvas id="metricsCanvas"></canvas>
+      </div>
+      <div class="card">
+        <div class="card-title"><span>👥 Connected Mesh Peers</span></div>
+        <table>
+          <thead><tr><th>Identity Key</th><th>Tier</th><th>Actions</th></tr></thead>
+          <tbody id="peerTableBody"><tr><td colspan="3" style="text-align: center; color: var(--text-muted);">No active peers.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <div class="card-title"><span>💰 Pricing Override Controls</span></div>
+        <label style="font-size: 10px; color: var(--text-muted);">Monthly Plan ($)</label>
+        <input type="number" id="monthlyPriceInput" step="0.01" style="width:100%; background:#080a0f; border:1px solid var(--border-color); color:#fff; padding:6px; margin:4px 0 12px 0; border-radius:4px;">
+        <label style="font-size: 10px; color: var(--text-muted);">Yearly Plan ($)</label>
+        <input type="number" id="yearlyPriceInput" step="0.01" style="width:100%; background:#080a0f; border:1px solid var(--border-color); color:#fff; padding:6px; margin:4px 0 12px 0; border-radius:4px;">
+        <button class="btn" style="width: 100%; background: var(--accent-green); color: #000;" onclick="updatePricing()">Update Mesh Pricing</button>
+      </div>
+      <div class="card">
+        <div class="card-title"><span>⚠️ Emergency Controls</span></div>
+        <button class="btn btn-danger" style="width: 100%; padding: 8px;" onclick="wipeServerRAM()">🔥 Emergency Wipe Server RAM</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    let ws = null;
+    let historyData = [];
+    const canvas = document.getElementById('metricsCanvas');
+    const ctx = canvas.getContext('2d');
     function initAdminSocket() {
       const proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-      const wsUrl = proto + window.location.host;
-      ws = new WebSocket(wsUrl);
-
+      ws = new WebSocket(proto + window.location.host);
       ws.onopen = () => {
         document.getElementById('connectionStatus').innerText = 'AUTHORIZED | ONLINE';
         ws.send(JSON.stringify({ type: 'admin-auth', secret: 'GHOST-ADMIN-PASS-2026' }));
       };
-
       ws.onmessage = (evt) => {
         const msg = JSON.parse(evt.data);
         if (msg.type === 'admin-authenticated' && msg.pricing) {
@@ -16,9 +80,52 @@
         }
         if (msg.type === 'admin-telemetry') updateDashboardUI(msg.metrics);
       };
-
       ws.onclose = () => {
         document.getElementById('connectionStatus').innerText = 'OFFLINE | RECONNECTING...';
         setTimeout(initAdminSocket, 2000);
       };
     }
+    function updateDashboardUI(m) {
+      document.getElementById('ramUsageText').innerText = 'RAM: ' + m.ramUsage;
+      const tbody = document.getElementById('peerTableBody');
+      tbody.innerHTML = '';
+      if (m.activePeers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-muted);">No active peers.</td></tr>';
+      } else {
+        m.activePeers.forEach(peer => {
+          const tr = document.createElement('tr');
+          const isPrem = peer.tier === 'PREMIUM';
+          tr.innerHTML = '<td style="font-weight: bold; color: var(--accent-green);">' + peer.key + '</td><td><span class="status-badge" style="color: ' + (isPrem ? 'var(--accent-green)' : 'var(--text-muted)') + ';">' + peer.tier + '</span></td><td><button class="btn" onclick="toggleTier(\'' + peer.key + '\', \'' + (isPrem ? 'FREE' : 'PREMIUM') + '\')">' + (isPrem ? 'Downgrade' : 'Promote') + '</button><button class="btn btn-danger" onclick="kickPeer(\'' + peer.key + '\')">Kick</button></td>';
+          tbody.appendChild(tr);
+        });
+      }
+      historyData.push(m.totalConnections);
+      if (historyData.length > 30) historyData.shift();
+      drawChart();
+    }
+    function drawChart() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = '#00ff88';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const step = canvas.width / 30;
+      historyData.forEach((val, i) => {
+        const y = canvas.height - (val * 15) - 20;
+        if (i === 0) ctx.moveTo(0, y);
+        else ctx.lineTo(i * step, y);
+      });
+      ctx.stroke();
+    }
+    function toggleTier(targetKey, tier) { ws.send(JSON.stringify({ type: 'admin-set-tier', targetKey, tier })); }
+    function kickPeer(targetKey) { if (confirm('Kick target ' + targetKey + '?')) ws.send(JSON.stringify({ type: 'admin-kick', targetKey })); }
+    function updatePricing() {
+      const monthly = parseFloat(document.getElementById('monthlyPriceInput').value);
+      const yearly = parseFloat(document.getElementById('yearlyPriceInput').value);
+      ws.send(JSON.stringify({ type: 'admin-update-pricing', pricing: { monthly, yearly } }));
+      alert('Pricing updated across mesh!');
+    }
+    function wipeServerRAM() { if (confirm('⚠️ Emergency Wipe Server RAM?')) ws.send(JSON.stringify({ type: 'admin-wipe-ram' })); }
+    initAdminSocket();
+  </script>
+</body>
+</html>

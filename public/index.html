@@ -3,150 +3,82 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ghost Talk - Secure Communication Platform</title>
-  <link rel="stylesheet" href="style.css?v=9.0">
+  <title>Ghost Talk — Zero-Trace Encrypted Mesh Communication</title>
+  <style>
+    :root {
+      --bg-dark: #0a0d12;
+      --card-bg: #121824;
+      --border-color: #1e293b;
+      --accent-green: #00ff88;
+      --accent-blue: #00bcd4;
+      --text-main: #e2e8f0;
+      --text-muted: #64748b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', monospace, sans-serif; }
+    body { background: var(--bg-dark); color: var(--text-main); min-height: 100vh; display: flex; flex-direction: column; justify-content: space-between; }
+    
+    header { display: flex; justify-content: space-between; align-items: center; padding: 20px 40px; border-bottom: 1px solid var(--border-color); }
+    .logo { font-size: 20px; font-weight: bold; color: var(--accent-green); display: flex; align-items: center; gap: 8px; }
+    
+    .hero { text-align: center; padding: 80px 20px 40px 20px; max-width: 800px; margin: 0 auto; }
+    .hero h1 { font-size: 42px; margin-bottom: 16px; color: #fff; }
+    .hero h1 span { color: var(--accent-green); }
+    .hero p { font-size: 16px; color: var(--text-muted); margin-bottom: 32px; line-height: 1.6; }
+    
+    .cta-group { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; margin-bottom: 40px; }
+    .btn { padding: 14px 28px; border-radius: 8px; font-weight: bold; font-size: 14px; text-decoration: none; cursor: pointer; transition: all 0.2s ease; display: inline-block; text-align: center; }
+    .btn-primary { background: var(--accent-green); color: #000; border: none; }
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-2px); }
+    .btn-secondary { background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); }
+    .btn-secondary:hover { border-color: var(--accent-blue); color: var(--accent-blue); transform: translateY(-2px); }
 
-  <!-- Cryptographic & QR Libraries -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; max-width: 900px; margin: 0 auto 80px auto; padding: 0 20px; }
+    .feature-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 24px; text-align: left; }
+    .feature-card h3 { font-size: 15px; color: var(--accent-blue); margin-bottom: 8px; }
+    .feature-card p { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+    footer { text-align: center; padding: 20px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-muted); }
+  </style>
 </head>
 <body>
 
-  <div class="header-row">
-    <h1>Ghost Talk</h1>
-    <div id="tier-badge" class="tier-badge">Free Tier</div>
-  </div>
-
-  <div id="status-bar" class="status-bar">STATUS: CONNECTING...</div>
-
-  <!-- Identity Section -->
-  <div class="section">
-    <label class="label">Your Secure Identity</label>
-    <div class="row" style="margin-bottom: 8px;">
-      <input type="text" id="my-identity" readonly>
-      <button id="btn-show-qr" class="btn btn-secondary" style="width: auto; padding: 0 14px;">QR</button>
-      <button id="btn-scan-qr" class="btn btn-secondary" style="width: auto; padding: 0 14px;">Scan</button>
+  <header>
+    <div class="logo">🛡️ Ghost Talk</div>
+    <div>
+      <a href="/app" class="btn btn-secondary" style="padding: 8px 16px; font-size: 12px;">Launch Web App</a>
     </div>
-    <div id="premium-custom-key-box" style="display: none; margin-top: 8px;">
-      <div class="row">
-        <input type="text" id="custom-key-input" placeholder="Enter custom secret key">
-        <button id="btn-save-custom-key" class="btn" style="width: auto; padding: 0 14px;">Set Key</button>
-      </div>
-    </div>
-  </div>
+  </header>
 
-  <!-- Contact Store Section -->
-  <div class="section">
-    <label class="label">RAM Contacts</label>
-    <div class="row" style="margin-bottom: 8px;">
-      <input type="text" id="contact-name" placeholder="Name / Alias" style="flex: 1;">
-      <input type="text" id="contact-key" placeholder="Contact Key" style="flex: 2;">
-    </div>
-    <button id="btn-add-contact" class="btn" style="width: 100%;">+ Add Contact to RAM</button>
-    
-    <div style="font-size: 11px; color: var(--text-muted); margin-top: 10px;">
-      Tap a contact to select (Hold 1.5s to delete):
-    </div>
-    <div id="contacts-list-container" class="contacts-list">
-      <div style="font-size: 11px; color: var(--text-muted); padding: 8px; text-align: center;">No active contacts. Add one above.</div>
-    </div>
-  </div>
-
-  <!-- Active Target & Call Action Buttons -->
-  <div class="section">
-    <div class="row" style="margin-bottom: 10px;">
-      <button id="btn-chat" class="btn btn-secondary" style="flex: 1;">💬 Chat</button>
-      <button id="btn-call-audio" class="btn btn-blue" style="flex: 1;">📞 Voice</button>
-      <button id="btn-call-video" class="btn" style="flex: 1;">📹 Video</button>
-      <button id="btn-end-session" class="btn btn-red" style="flex: 1;">End</button>
-    </div>
-  </div>
-
-  <!-- Video Stage Container -->
-  <div id="video-container">
-    <video id="remote-video" autoplay playsinline></video>
-    <audio id="remote-audio" autoplay playsinline></audio>
-    <video id="local-video" autoplay playsinline muted></video>
-  </div>
-
-  <!-- Call Controls -->
-  <div id="call-controls" class="call-controls">
-    <div class="row">
-      <button id="btn-toggle-mic" class="btn btn-secondary" style="flex: 1;">🎙️ Mic On</button>
-      <button id="btn-toggle-cam" class="btn btn-secondary" style="flex: 1;">📹 Cam On</button>
-    </div>
-  </div>
-
-  <!-- Encrypted Chat Section -->
-  <div class="section">
-    <label class="label">Secure Encrypted Messaging</label>
-    <div id="chat-box" class="chat-box"></div>
-    <div class="row">
-      <input type="text" id="chat-input" placeholder="Type encrypted message...">
-      <button id="btn-send" class="btn" style="width: auto; padding: 0 16px;">Send</button>
-      <button id="btn-attach" class="btn btn-secondary" style="width: auto; padding: 0 14px;" title="Attach File">📎</button>
-      <input type="file" id="file-input" style="display: none;">
-    </div>
-  </div>
-
-  <!-- Global Memory Wipe Button -->
-  <button id="btn-wipe" class="btn btn-red" style="margin-bottom: 20px; width: 100%;">🔥 Wipe RAM Memory & Reset</button>
-
-  <!-- Incoming Call Modal -->
-  <div id="call-modal" class="modal">
-    <div class="modal-content">
-      <h3 id="modal-heading" style="color: var(--text-main); margin-bottom: 8px;">Incoming Secure Call</h3>
-      <p id="caller-id-text" style="font-size: 13px; margin-bottom: 20px; color: var(--text-muted);"></p>
-      <div class="row">
-        <button id="btn-accept" class="btn" style="flex: 1;">Accept</button>
-        <button id="btn-decline" class="btn btn-red" style="flex: 1;">Decline</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- QR Code Modal -->
-  <div id="qr-modal" class="modal">
-    <div class="modal-content">
-      <h3 id="qr-modal-title" style="color: var(--text-main); margin-bottom: 14px;">Identity Key QR</h3>
-      <div id="qr-display-container" style="background: #fff; padding: 14px; border-radius: 12px; display: inline-block; margin-bottom: 14px;">
-        <div id="qrcode"></div>
-      </div>
-      <div id="qr-scanner-container" style="display: none; margin-bottom: 14px;">
-        <video id="qr-video" style="width: 100%; max-height: 180px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border-subtle);" playsinline></video>
-        <canvas id="qr-canvas" style="display: none;"></canvas>
-        <button id="btn-upload-qr-img" class="btn btn-secondary" style="margin-top: 10px; font-size: 11px;">📁 Upload QR Image</button>
-        <input type="file" id="qr-file-input" accept="image/*" style="display: none;">
-      </div>
-      <button id="btn-close-qr" class="btn btn-secondary" style="width: 100%;">Close</button>
-    </div>
-  </div>
-
-  
+  <main>
+    <div class="hero">
+      <h1>Secure, Zero-Trace <span>Mesh Communication</span></h1>
+      <p>Experience completely anonymous end-to-end encrypted messaging, voice calls, and video streaming across the globe. No account required. No permanent logs saved.</p>
       
-      <!-- AUTOMATED NOWPAYMENTS GATEWAY MODAL -->
-  <div id="payment-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.85); z-index: 9999; justify-content: center; align-items: center; padding: 16px;">
-    <div style="background: #121824; border: 1px solid #00ff88; border-radius: 12px; max-width: 420px; width: 100%; padding: 20px; color: #fff; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
-      <h3 style="color: #00ff88; margin-bottom: 8px;">👑 Upgrade to Ghost Talk Premium</h3>
-      <p style="font-size: 11px; color: #a0aec0; margin-bottom: 16px;">Multi-Currency Gateway (<span id="modal-display-price">$9.99</span> / 30 Days)</p>
-      
-      <div style="background: #080a0f; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; font-size: 11px; text-align: left; margin-bottom: 16px;">
-        <div style="margin-bottom: 6px; font-weight: bold; color: #00bcd4;">✨ Supported Payment Methods:</div>
-        <ul style="padding-left: 16px; color: #a0aec0; line-height: 1.5; font-size: 10px;">
-          <li>Accepts 300+ Cryptos (Bitcoin, USDT, Solana, TRX, ETH, etc.)</li>
-          <li>Live dynamic QR code with exact locked pricing</li>
-          <li>Instant automated activation via webhooks (No manual hashes needed)</li>
-        </ul>
-      </div>
-
-      <div style="display: flex; gap: 8px;">
-        <button id="btn-start-checkout" style="flex: 2; background: #00ff88; color: #000; font-weight: bold; padding: 10px; border: none; border-radius: 6px; cursor: pointer;">Proceed to Secure Checkout</button>
-        <button id="btn-close-payment-modal" style="flex: 1; background: #1e293b; color: #fff; padding: 10px; border: none; border-radius: 6px; cursor: pointer;">Cancel</button>
+      <div class="cta-group">
+        <a href="/app" class="btn btn-primary">🚀 Launch Web App</a>
+        <a href="/download-apk" class="btn btn-secondary">📱 Download Android APK</a>
       </div>
     </div>
-  </div>  
-  
 
-  <script type="module" src="security.js"></script>
-  <script type="module" src="app.js?v=9.0"></script>
+    <div class="features-grid">
+      <div class="feature-card">
+        <h3>🔒 End-to-End Encryption</h3>
+        <p>All calls, files, and text messages are fully encrypted directly between peers using secure WebRTC protocols.</p>
+      </div>
+      <div class="feature-card">
+        <h3>⚡ RAM-Only Storage</h3>
+        <p>No chat history or identity metadata is written to permanent databases. Everything lives securely in active memory.</p>
+      </div>
+      <div class="feature-card">
+        <h3>🌐 Global Mesh Network</h3>
+        <p>Connect instantly with anyone worldwide via direct cryptographic keys or quick QR-code scans.</p>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    &copy; 2026 Ghost Talk Protocol. Secured & Open Source.
+  </footer>
+
 </body>
 </html>

@@ -4,29 +4,28 @@ const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
 
 const app = express();
-app.use(express.static('public'));
-// --- WEBSITE & APP ROUTING ---
-// Root URL serves your clean landing page
+
+
+// --- CLEAN SERVER ROUTING ---
 app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/public/landing.html');
+  res.sendFile(__dirname + '/public/landing.html'); // Main website landing page
 });
 
-// /app route serves your actual WebRTC communication app
 app.get('/app', (req, res) => {
-  res.sendFile(__dirname + '/public/index.html');
+  res.sendFile(__dirname + '/public/index.html'); // WebRTC Chat App
 });
 
-// Direct APK download route (optional helper if your APK is in public)
 app.get('/download-apk', (req, res) => {
   res.download(__dirname + '/public/GhostTalk.apk');
 });
-
+// ----------------------------
+app.use(express.static('public'));
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-const clients = new Map(); // Identity Key -> WebSocket connection
-const clientTiers = new Map(); // Identity Key -> 'FREE' | 'PREMIUM'
-const clientExpirations = new Map(); // Identity Key -> Expiry Timestamp in ms
+const clients = new Map();
+const clientTiers = new Map();
+const clientExpirations = new Map();
 let adminWs = null;
 
 let planPricing = {
@@ -78,16 +77,12 @@ wss.on('connection', (ws, req) => {
     try {
       const data = JSON.parse(message);
 
-      // --- ADMIN AUTHENTICATION ---
       if (data.type === 'admin-auth') {
         if (data.secret === 'GHOST-ADMIN-PASS-2026') {
           adminWs = ws;
           currentKey = 'ADMIN-ROOT';
           clients.set(currentKey, ws);
-          ws.send(JSON.stringify({ 
-            type: 'admin-authenticated', 
-            pricing: planPricing 
-          }));
+          ws.send(JSON.stringify({ type: 'admin-authenticated', pricing: planPricing }));
           broadcastAdminMetrics();
         } else {
           ws.send(JSON.stringify({ type: 'admin-error', message: 'Unauthorized Passphrase.' }));
@@ -95,63 +90,52 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      if (data.type === 'admin-set-tier') {
-        if (ws === adminWs) {
-          clientTiers.set(data.targetKey, data.tier);
-          clientExpirations.delete(data.targetKey);
-          broadcastAdminMetrics();
-          if (clients.has(data.targetKey)) {
-            clients.get(data.targetKey).send(JSON.stringify({ type: 'tier-updated', tier: data.tier }));
+      if (data.type === 'admin-set-tier' && ws === adminWs) {
+        clientTiers.set(data.targetKey, data.tier);
+        clientExpirations.delete(data.targetKey);
+        broadcastAdminMetrics();
+        if (clients.has(data.targetKey)) {
+          clients.get(data.targetKey).send(JSON.stringify({ type: 'tier-updated', tier: data.tier }));
+        }
+        return;
+      }
+
+      if (data.type === 'admin-update-pricing' && ws === adminWs && data.pricing) {
+        planPricing = { ...data.pricing };
+        broadcastAdminMetrics();
+        return;
+      }
+
+      if (data.type === 'admin-kick' && ws === adminWs && clients.has(data.targetKey)) {
+        const target = clients.get(data.targetKey);
+        target.send(JSON.stringify({ type: 'end-session' }));
+        target.close();
+        clients.delete(data.targetKey);
+        clientTiers.delete(data.targetKey);
+        clientExpirations.delete(data.targetKey);
+        broadcastAdminMetrics();
+        return;
+      }
+
+      if (data.type === 'admin-wipe-ram' && ws === adminWs) {
+        clients.forEach((clientWs, key) => {
+          if (key !== 'ADMIN-ROOT') {
+            clientWs.send(JSON.stringify({ type: 'end-session' }));
+            clientWs.close();
           }
-        }
+        });
+        clients.clear();
+        clientTiers.clear();
+        clientExpirations.clear();
+        clients.set('ADMIN-ROOT', adminWs);
+        broadcastAdminMetrics();
         return;
       }
 
-      if (data.type === 'admin-update-pricing') {
-        if (ws === adminWs && data.pricing) {
-          planPricing = { ...data.pricing };
-          broadcastAdminMetrics();
-        }
-        return;
-      }
-
-      if (data.type === 'admin-kick') {
-        if (ws === adminWs && clients.has(data.targetKey)) {
-          const target = clients.get(data.targetKey);
-          target.send(JSON.stringify({ type: 'end-session' }));
-          target.close();
-          clients.delete(data.targetKey);
-          clientTiers.delete(data.targetKey);
-          clientExpirations.delete(data.targetKey);
-          broadcastAdminMetrics();
-        }
-        return;
-      }
-
-      if (data.type === 'admin-wipe-ram') {
-        if (ws === adminWs) {
-          clients.forEach((clientWs, key) => {
-            if (key !== 'ADMIN-ROOT') {
-              clientWs.send(JSON.stringify({ type: 'end-session' }));
-              clientWs.close();
-            }
-          });
-          clients.clear();
-          clientTiers.clear();
-          clientExpirations.clear();
-          clients.set('ADMIN-ROOT', adminWs);
-          broadcastAdminMetrics();
-        }
-        return;
-      }
-
-      // --- CORE GHOST TALK SIGNALING ---
       if (data.type === 'register') {
         currentKey = data.key.toUpperCase();
         clients.set(currentKey, ws);
-        if (!clientTiers.has(currentKey)) {
-          clientTiers.set(currentKey, 'FREE');
-        }
+        if (!clientTiers.has(currentKey)) clientTiers.set(currentKey, 'FREE');
         ws.send(JSON.stringify({ type: 'registered' }));
         broadcastAdminMetrics();
       } else if (data.targetKey) {
@@ -161,16 +145,10 @@ wss.on('connection', (ws, req) => {
           if (targetWs && targetWs.readyState === WebSocket.OPEN) {
             data.senderKey = currentKey === 'ADMIN-ROOT' ? 'ADMIN DASHBOARD' : currentKey;
             targetWs.send(JSON.stringify(data));
-          } else {
-            ws.send(JSON.stringify({ type: 'error', message: `Target socket closed.` }));
           }
-        } else {
-          ws.send(JSON.stringify({ type: 'error', message: `Target offline.` }));
         }
       }
-    } catch (err) {
-      console.error('Signaling error:', err);
-    }
+    } catch (err) {}
   });
 
   ws.on('close', () => {
@@ -186,8 +164,7 @@ wss.on('connection', (ws, req) => {
 
 function broadcastAdminMetrics() {
   if (!adminWs || adminWs.readyState !== 1) return;
-
-  const totalConnections = Math.max(0, clients.size - (adminWs ? 1 : 0));
+  const totalConnections = Math.max(0, clients.size - 1);
   let premiumCount = 0;
   const activePeers = [];
 
@@ -222,8 +199,8 @@ app.post('/api/create-payment', async (req, res) => {
   try {
     const { userKey, planType } = req.body;
     if (!userKey) return res.status(400).json({ success: false, message: 'User key required.' });
-
     const priceAmount = planType === 'yearly' ? planPricing.yearly : planPricing.monthly;
+    
     const response = await fetch('https://api.nowpayments.io/v1/invoice', {
       method: 'POST',
       headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
@@ -249,7 +226,6 @@ app.post('/api/nowpayments-webhook', express.raw({ type: 'application/json' }), 
   try {
     const nowpaymentsSig = req.headers['x-nowpayments-sig'];
     if (!nowpaymentsSig) return res.status(400).send('Missing signature.');
-
     const hmac = crypto.createHmac('sha512', NOWPAYMENTS_IPN_KEY);
     hmac.update(req.body);
     if (hmac.digest('hex') !== nowpaymentsSig) return res.status(400).send('Invalid signature.');
@@ -263,6 +239,7 @@ app.post('/api/nowpayments-webhook', express.raw({ type: 'application/json' }), 
     res.status(500).send('Error');
   }
 });
+
 app.get('/admin-panel', (req, res) => {
   if (req.query.key === 'GHOST-USB-KEY-999') {
     res.sendFile(__dirname + '/public/admin.html');
@@ -270,7 +247,6 @@ app.get('/admin-panel', (req, res) => {
     res.status(404).send('Not Found');
   }
 });
-
 
 const PORT = process.env.PORT || 8158;
 server.listen(PORT, '0.0.0.0', () => {

@@ -5,6 +5,21 @@ const crypto = require('crypto');
 
 const app = express();
 app.use(express.static('public'));
+// --- WEBSITE & APP ROUTING ---
+// Root URL serves your clean landing page
+app.get('/', (req, res) => {
+  res.sendFile(__dirname + '/public/landing.html');
+});
+
+// /app route serves your actual WebRTC communication app
+app.get('/app', (req, res) => {
+  res.sendFile(__dirname + '/public/index.html');
+});
+
+// Direct APK download route (optional helper if your APK is in public)
+app.get('/download-apk', (req, res) => {
+  res.download(__dirname + '/public/GhostTalk.apk');
+});
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });

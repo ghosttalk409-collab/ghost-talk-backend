@@ -7,19 +7,20 @@ const app = express();
 
 // --- CLEAN SERVER ROUTING ---
 app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/public/landing.html'); // Main website landing page for web visitors
+  res.sendFile(__dirname + '/public/landing.html'); // Elite professional landing page
 });
 
 app.get('/app', (req, res) => {
   res.sendFile(__dirname + '/public/index.html'); // WebRTC Chat App interface
 });
 
+// Robust download route redirecting to GitHub Actions build artifacts
 app.get('/download-apk', (req, res) => {
-  res.download(__dirname + '/public/GhostTalk.apk');
+  res.redirect('https://github.com/ghosttalk409-collab/ghost-talk-backend/actions');
 });
 // ----------------------------
 
-// Static files (CSS, JS, assets) served after explicit routes
+// Static asset middleware
 app.use(express.static('public'));
 
 const server = http.createServer(app);

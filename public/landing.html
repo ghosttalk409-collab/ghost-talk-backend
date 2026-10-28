@@ -3,248 +3,240 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ghost Talk — Zero-Trace Decentralized Mesh Protocol</title>
+  <title>Ghost Talk — Sovereign Encrypted Protocol</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;650;700&family=Plus+Jakarta+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-core: #05070b;
-      --bg-surface: #0e1420;
-      --bg-glass: rgba(14, 20, 32, 0.7);
-      --border-subtle: #1e293b;
-      --accent-neon: #00ff88;
-      --accent-cyan: #00f0ff;
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
+      --bg-rich: #0b0f0e;
+      --bg-card: #131917;
+      --bg-card-hover: #18201d;
+      --border-gold: rgba(212, 175, 55, 0.25);
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --accent-gold: #d4af37;
+      --accent-emerald: #1b4d3e;
+      --accent-emerald-bright: #2e7d63;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
-    
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
+
     body {
-      background-color: var(--bg-core);
+      background-color: var(--bg-rich);
       color: var(--text-main);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       overflow-x: hidden;
-      background-image: 
-        radial-gradient(circle at 10% 20%, rgba(0, 255, 136, 0.03) 0%, transparent 40%),
-        radial-gradient(circle at 90% 80%, rgba(0, 240, 255, 0.03) 0%, transparent 40%);
     }
 
-    /* Header Navbar */
+    /* Background Atmospheric Glow */
+    body::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 50%;
+      transform: translateX(-50%);
+      width: 100%;
+      max-width: 1200px;
+      height: 450px;
+      background: radial-gradient(ellipse at top, rgba(27, 77, 62, 0.25) 0%, transparent 70%);
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    header, main, footer { position: relative; z-index: 1; }
+
+    /* Sophisticated Header */
     header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 24px 48px;
+      padding: 32px 64px;
       border-bottom: 1px solid var(--border-subtle);
-      background: var(--bg-glass);
-      backdrop-filter: blur(12px);
+      background: rgba(11, 15, 14, 0.85);
+      backdrop-filter: blur(16px);
       position: sticky;
       top: 0;
-      z-index: 100;
     }
 
     .brand {
       display: flex;
       align-items: center;
       gap: 12px;
+      font-family: 'Cinzel', serif;
       font-size: 20px;
-      font-weight: 800;
-      letter-spacing: -0.5px;
-      color: var(--text-main);
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: var(--accent-gold);
     }
 
-    .brand span { color: var(--accent-neon); text-shadow: 0 0 20px rgba(0,255,136,0.4); }
-
-    .nav-actions {
-      display: flex;
-      gap: 16px;
-      align-items: center;
-    }
+    .nav-actions { display: flex; gap: 20px; align-items: center; }
 
     /* Hero Section */
     .hero {
       text-align: center;
-      padding: 100px 20px 60px 20px;
-      max-width: 900px;
+      padding: 120px 24px 80px 24px;
+      max-width: 960px;
       margin: 0 auto;
     }
 
-    .status-pill {
+    .crest-badge {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      padding: 6px 16px;
-      background: rgba(0, 255, 136, 0.08);
-      border: 1px solid rgba(0, 255, 136, 0.2);
-      border-radius: 30px;
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--accent-neon);
-      margin-bottom: 24px;
-      letter-spacing: 0.5px;
+      gap: 10px;
+      padding: 8px 20px;
+      background: rgba(212, 175, 55, 0.05);
+      border: 1px solid var(--border-gold);
+      border-radius: 40px;
+      font-family: 'Cinzel', serif;
+      font-size: 11px;
+      letter-spacing: 2.5px;
+      color: var(--accent-gold);
       text-transform: uppercase;
-    }
-
-    .pulse-dot {
-      width: 8px;
-      height: 8px;
-      background: var(--accent-neon);
-      border-radius: 50%;
-      box-shadow: 0 0 10px var(--accent-neon);
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0% { transform: scale(0.95); opacity: 0.8; }
-      50% { transform: scale(1.2); opacity: 1; box-shadow: 0 0 16px var(--accent-neon); }
-      100% { transform: scale(0.95); opacity: 0.8; }
+      margin-bottom: 32px;
     }
 
     .hero h1 {
-      font-size: clamp(38px, 6vw, 64px);
-      line-height: 1.1;
-      font-weight: 900;
-      letter-spacing: -1.5px;
-      margin-bottom: 24px;
+      font-family: 'Cinzel', serif;
+      font-size: clamp(40px, 6.5vw, 72px);
+      line-height: 1.15;
+      font-weight: 650;
+      letter-spacing: -0.5px;
+      margin-bottom: 28px;
     }
 
     .hero h1 span {
-      background: linear-gradient(135deg, var(--accent-neon), var(--accent-cyan));
+      background: linear-gradient(135deg, #f3f4f6 30%, var(--accent-gold) 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
 
     .hero p {
-      font-size: clamp(16px, 2vw, 18px);
+      font-size: clamp(16px, 1.8vw, 19px);
       color: var(--text-muted);
-      line-height: 1.6;
-      max-width: 700px;
-      margin: 0 auto 40px auto;
+      line-height: 1.7;
+      max-width: 720px;
+      margin: 0 auto 48px auto;
+      font-weight: 300;
     }
 
-    /* CTA Buttons */
+    /* Luxury Action Buttons */
     .cta-container {
       display: flex;
       justify-content: center;
-      gap: 16px;
+      gap: 20px;
       flex-wrap: wrap;
-      margin-bottom: 80px;
+      margin-bottom: 100px;
     }
 
     .btn {
-      padding: 16px 32px;
-      border-radius: 12px;
-      font-weight: 700;
+      padding: 18px 36px;
+      border-radius: 8px;
+      font-weight: 600;
       font-size: 14px;
       text-decoration: none;
       cursor: pointer;
-      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: all 0.3s ease;
       display: inline-flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
+      letter-spacing: 0.5px;
     }
 
     .btn-primary {
-      background: var(--accent-neon);
-      color: #000;
-      box-shadow: 0 4px 24px rgba(0, 255, 136, 0.25);
+      background: var(--accent-gold);
+      color: #0b0f0e;
+      font-weight: 700;
+      box-shadow: 0 4px 24px rgba(212, 175, 55, 0.2);
     }
 
     .btn-primary:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 6px 32px rgba(0, 255, 136, 0.4);
+      background: #e2be42;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 30px rgba(212, 175, 55, 0.3);
     }
 
     .btn-secondary {
-      background: var(--bg-surface);
+      background: var(--bg-card);
       color: var(--text-main);
-      border: 1px solid var(--border-subtle);
+      border: 1px solid var(--border-gold);
     }
 
     .btn-secondary:hover {
-      border-color: var(--accent-cyan);
-      color: var(--accent-cyan);
-      transform: translateY(-3px);
-      background: rgba(0, 240, 255, 0.03);
+      background: var(--bg-card-hover);
+      border-color: var(--accent-gold);
+      transform: translateY(-2px);
     }
 
-    /* Features Grid */
+    /* Pillars / Features Section */
     .features-section {
-      max-width: 1100px;
-      margin: 0 auto 100px auto;
-      padding: 0 24px;
+      max-width: 1140px;
+      margin: 0 auto 120px auto;
+      padding: 0 32px;
     }
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 24px;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 28px;
     }
 
-    .card {
-      background: var(--bg-surface);
+    .pillar-card {
+      background: var(--bg-card);
       border: 1px solid var(--border-subtle);
-      border-radius: 16px;
-      padding: 32px;
-      transition: border-color 0.3s, transform 0.3s;
+      border-radius: 12px;
+      padding: 40px 36px;
+      transition: all 0.3s ease;
       position: relative;
-      overflow: hidden;
     }
 
-    .card:hover {
-      border-color: rgba(0, 255, 136, 0.3);
+    .pillar-card:hover {
+      border-color: var(--border-gold);
+      background: var(--bg-card-hover);
       transform: translateY(-4px);
     }
 
-    .card::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; width: 100%; height: 2px;
-      background: linear-gradient(90deg, transparent, var(--accent-neon), transparent);
-      opacity: 0;
-      transition: opacity 0.3s;
-    }
-
-    .card:hover::before { opacity: 1; }
-
-    .card-icon {
-      font-size: 28px;
+    .pillar-number {
+      font-family: 'Cinzel', serif;
+      font-size: 13px;
+      color: var(--accent-gold);
+      letter-spacing: 2px;
       margin-bottom: 20px;
-      display: inline-block;
-      padding: 12px;
-      background: rgba(255, 255, 255, 0.03);
-      border-radius: 10px;
-      border: 1px solid var(--border-subtle);
+      display: block;
     }
 
-    .card h3 {
-      font-size: 18px;
-      font-weight: 700;
-      margin-bottom: 12px;
+    .pillar-card h3 {
+      font-family: 'Cinzel', serif;
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 14px;
       color: var(--text-main);
     }
 
-    .card p {
+    .pillar-card p {
       font-size: 14px;
       color: var(--text-muted);
-      line-height: 1.6;
+      line-height: 1.7;
+      font-weight: 300;
     }
 
     /* Footer */
     footer {
       text-align: center;
-      padding: 32px;
+      padding: 48px;
       border-top: 1px solid var(--border-subtle);
       font-size: 13px;
       color: var(--text-muted);
-      background: var(--bg-surface);
+      background: rgba(11, 15, 14, 0.9);
       margin-top: auto;
+      letter-spacing: 0.5px;
     }
 
     @media(max-width: 768px) {
-      header { padding: 16px 20px; }
-      .hero { padding: 60px 16px 40px 16px; }
+      header { padding: 20px 24px; }
+      .hero { padding: 80px 20px 60px 20px; }
     }
   </style>
 </head>
@@ -252,55 +244,54 @@
 
   <header>
     <div class="brand">
-      <span>🛡️</span> GHOST TALK
+      <span>❖</span> GHOST TALK
     </div>
     <div class="nav-actions">
-      <a href="/app" class="btn btn-secondary" style="padding: 10px 20px; font-size: 13px;">Launch App</a>
+      <a href="/app" class="btn btn-secondary" style="padding: 10px 22px; font-size: 12px;">Web Client</a>
     </div>
   </header>
 
   <main>
     <div class="hero">
-      <div class="status-pill">
-        <div class="pulse-dot"></div>
-        Mesh Network Active & Encrypted
+      <div class="crest-badge">
+        Sovereign Communications Protocol
       </div>
-      <h1>Zero-Trace Decentralized <span>Mesh Communication</span></h1>
-      <p>Experience absolute operational security with peer-to-peer encrypted messaging, secure voice links, and video streams. Zero logs. Zero user tracking. Complete anonymity.</p>
+      <h1>Absolute Privacy, <span>Without Compromise</span></h1>
+      <p>A peer-to-peer encrypted sanctuary for private discourse, secure voice links, and direct media streaming. Entirely decentralized, leaving no trace upon the digital landscape.</p>
       
       <div class="cta-container">
         <a href="/app" class="btn btn-primary">
-          🚀 Launch Web App
+          Launch Secure Web App
         </a>
-        <a href="https://github.com/ghosttalk409-collab/ghost-talk-backend/actions" target="_blank" class="btn btn-secondary">
-          📱 Download APK Build
+        <a href="/download-apk" class="btn btn-secondary">
+          Download Android APK
         </a>
       </div>
     </div>
 
     <div class="features-section">
       <div class="grid">
-        <div class="card">
-          <div class="card-icon">🔒</div>
-          <h3>End-to-End Encryption</h3>
-          <p>Direct peer-to-peer WebRTC channels ensure your communications are cryptographically locked between participants.</p>
+        <div class="pillar-card">
+          <span class="pillar-number">I. / ARCHITECTURE</span>
+          <h3>Zero-Trace Memory</h3>
+          <p>No databases, permanent ledgers, or conversation metadata are ever retained. All exchanges exist purely within encrypted active memory.</p>
         </div>
-        <div class="card">
-          <div class="card-icon">⚡</div>
-          <h3>RAM-Only Architecture</h3>
-          <p>No chat history, credentials, or session logs are ever written to permanent databases. Everything lives securely in active memory.</p>
+        <div class="pillar-card">
+          <span class="pillar-number">II. / CRYPTOGRAPHY</span>
+          <h3>Direct P2P Encrypted Links</h3>
+          <p>Communication occurs exclusively between participants using robust WebRTC standards, bypassing central interception points.</p>
         </div>
-        <div class="card">
-          <div class="card-icon">🌐</div>
-          <h3>Global Mesh Routing</h3>
-          <p>Connect instantly across networks globally via secure cryptographic identity keys or instantaneous QR code handshake scans.</p>
+        <div class="pillar-card">
+          <span class="pillar-number">III. / DISCRETION</span>
+          <h3>Cryptographic Identity</h3>
+          <p>Establish instantaneous secure connections worldwide utilizing cryptographic keys or precision QR handshakes with total anonymity.</p>
         </div>
       </div>
     </div>
   </main>
 
   <footer>
-    &copy; 2026 Ghost Talk Protocol. Open Source & Secured under Zero-Trace Standards.
+    &copy; 2026 Ghost Talk Protocol. Privately Secured & Decentralized.
   </footer>
 
 </body>

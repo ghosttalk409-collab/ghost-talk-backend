@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ghost Talk — Zero-Trace Encrypted Mesh Communication</title>
+  <title>Ghost Talk — Secure Mesh Client</title>
   <style>
     :root {
       --bg-dark: #0a0d12;
@@ -11,74 +11,171 @@
       --border-color: #1e293b;
       --accent-green: #00ff88;
       --accent-blue: #00bcd4;
+      --accent-red: #ff4757;
       --text-main: #e2e8f0;
       --text-muted: #64748b;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', monospace, sans-serif; }
-    body { background: var(--bg-dark); color: var(--text-main); min-height: 100vh; display: flex; flex-direction: column; justify-content: space-between; }
+    body { background: var(--bg-dark); color: var(--text-main); min-height: 100vh; display: flex; flex-direction: column; padding: 16px; gap: 16px; }
     
-    header { display: flex; justify-content: space-between; align-items: center; padding: 20px 40px; border-bottom: 1px solid var(--border-color); }
-    .logo { font-size: 20px; font-weight: bold; color: var(--accent-green); display: flex; align-items: center; gap: 8px; }
-    
-    .hero { text-align: center; padding: 80px 20px 40px 20px; max-width: 800px; margin: 0 auto; }
-    .hero h1 { font-size: 42px; margin-bottom: 16px; color: #fff; }
-    .hero h1 span { color: var(--accent-green); }
-    .hero p { font-size: 16px; color: var(--text-muted); margin-bottom: 32px; line-height: 1.6; }
-    
-    .cta-group { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; margin-bottom: 40px; }
-    .btn { padding: 14px 28px; border-radius: 8px; font-weight: bold; font-size: 14px; text-decoration: none; cursor: pointer; transition: all 0.2s ease; display: inline-block; text-align: center; }
-    .btn-primary { background: var(--accent-green); color: #000; border: none; }
-    .btn-primary:hover { opacity: 0.9; transform: translateY(-2px); }
-    .btn-secondary { background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); }
-    .btn-secondary:hover { border-color: var(--accent-blue); color: var(--accent-blue); transform: translateY(-2px); }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; }
+    .logo { font-size: 18px; font-weight: bold; color: var(--accent-green); }
+    .status-badge { font-size: 11px; padding: 4px 10px; border-radius: 20px; background: rgba(0,255,136,0.1); color: var(--accent-green); border: 1px solid var(--accent-green); }
+    .offline { background: rgba(255,71,87,0.1) !important; color: var(--accent-red) !important; border-color: var(--accent-red) !important; }
+    .tier-badge { font-size: 11px; padding: 4px 10px; border-radius: 20px; background: transparent; color: var(--accent-green); border: 1px solid var(--accent-green); cursor: pointer; }
 
-    .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; max-width: 900px; margin: 0 auto 80px auto; padding: 0 20px; }
-    .feature-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 24px; text-align: left; }
-    .feature-card h3 { font-size: 15px; color: var(--accent-blue); margin-bottom: 8px; }
-    .feature-card p { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+    .main-grid { display: grid; grid-template-columns: 1fr; gap: 16px; max-width: 800px; margin: 0 auto; width: 100%; }
+    @media(min-width: 768px) { .main-grid { grid-template-columns: 320px 1fr; } }
 
-    footer { text-align: center; padding: 20px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-muted); }
+    .panel { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    h3 { font-size: 13px; color: var(--accent-blue); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    
+    input, button { background: #0a0d12; border: 1px solid var(--border-color); color: var(--text-main); padding: 10px 12px; border-radius: 6px; font-size: 13px; outline: none; }
+    input:focus { border-color: var(--accent-blue); }
+    button { cursor: pointer; font-weight: bold; transition: opacity 0.2s; }
+    button:hover { opacity: 0.85; }
+    .btn-green { background: var(--accent-green); color: #000; border: none; }
+    .btn-red { background: var(--accent-red); color: #fff; border: none; }
+    .btn-blue { background: var(--accent-blue); color: #000; border: none; }
+
+    .contacts-list { max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    .contact-card { background: #0a0d12; border: 1px solid var(--border-color); padding: 8px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+    .contact-card.selected { border-color: var(--accent-green); background: rgba(0,255,136,0.05); }
+    .contact-card .name { font-weight: bold; font-size: 12px; }
+    .contact-card .key { font-size: 10px; color: var(--text-muted); }
+
+    .chat-container { display: flex; flex-direction: column; height: 350px; background: #0a0d12; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }
+    #chat-box { flex: 1; padding: 12px; overflow-y: auto; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+    .chat-input-row { display: flex; gap: 8px; padding: 8px; background: var(--card-bg); border-top: 1px solid var(--border-color); }
+
+    .video-grid { display: none; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    video { width: 100%; height: 120px; background: #000; border-radius: 6px; object-fit: cover; }
+
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; z-index: 1000; padding: 16px; }
+    .modal-content { background: var(--card-bg); border: 1px solid var(--border-color); padding: 24px; border-radius: 12px; max-width: 400px; width: 100%; text-align: center; display: flex; flex-direction: column; gap: 16px; }
   </style>
 </head>
 <body>
 
   <header>
     <div class="logo">🛡️ Ghost Talk</div>
-    <div>
-      <a href="/app" class="btn btn-secondary" style="padding: 8px 16px; font-size: 12px;">Launch Web App</a>
-    </div>
+    <div id="status-bar" class="status-badge">STATUS: CONNECTING...</div>
+    <div id="tier-badge" class="tier-badge" title="Tap to upgrade">FREE TIER</div>
   </header>
 
-  <main>
-    <div class="hero">
-      <h1>Secure, Zero-Trace <span>Mesh Communication</span></h1>
-      <p>Experience completely anonymous end-to-end encrypted messaging, voice calls, and video streaming across the globe. No account required. No permanent logs saved.</p>
+  <div class="main-grid">
+    <!-- Left Sidebar: Identity & Contacts -->
+    <div class="panel">
+      <div>
+        <h3>Your Secure Identity</h3>
+        <div style="display: flex; gap: 8px; margin-top: 6px;">
+          <input type="text" id="my-identity" readonly style="flex: 1; font-family: monospace; font-size: 11px;" />
+          <button id="btn-show-qr" class="btn-blue" style="padding: 10px;">QR</button>
+        </div>
+      </div>
+
+      <div id="premium-custom-key-box" style="display: none;">
+        <h3>Custom Handle</h3>
+        <div style="display: flex; gap: 8px; margin-top: 6px;">
+          <input type="text" id="custom-key-input" placeholder="Custom Key" style="flex: 1;" />
+          <button id="btn-save-custom-key" class="btn-green">Set</button>
+        </div>
+      </div>
+
+      <div>
+        <h3>RAM Contacts</h3>
+        <div style="display: flex; gap: 6px; margin-bottom: 6px; margin-top: 6px;">
+          <input type="text" id="contact-name" placeholder="Name" style="width: 35%;" />
+          <input type="text" id="contact-key" placeholder="GHOST-XXXX" style="flex: 1; text-transform: uppercase;" />
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button id="btn-add-contact" class="btn-green" style="flex: 1;">+ Add Contact</button>
+          <button id="btn-scan-qr" class="btn-blue">Scan</button>
+        </div>
+        <div id="contacts-list-container" class="contacts-list" style="margin-top: 8px;"></div>
+      </div>
+
+      <button id="btn-wipe" class="btn-red" style="margin-top: auto;">⚠️ WIPE RAM STATE</button>
+    </div>
+
+    <!-- Right Panel: Chat & Calls -->
+    <div class="panel">
+      <h3>Secure Encrypted Channel</h3>
       
-      <div class="cta-group">
-        <a href="/app" class="btn btn-primary">🚀 Launch Web App</a>
-        <a href="/download-apk" class="btn btn-secondary">📱 Download Android APK</a>
+      <div class="chat-container">
+        <div id="chat-box"></div>
+        <div class="chat-input-row">
+          <input type="text" id="chat-input" placeholder="Type secure message..." style="flex: 1;" />
+          <button id="btn-attach" class="btn-blue" title="Send File">📁</button>
+          <button id="btn-send" class="btn-green">Send</button>
+        </div>
+      </div>
+      <input type="file" id="file-input" style="display: none;" />
+
+      <!-- Call Controls -->
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <button id="btn-chat" class="btn-blue" style="flex: 1;">💬 Text</button>
+        <button id="btn-call-audio" class="btn-green" style="flex: 1;">📞 Audio</button>
+        <button id="btn-call-video" class="btn-green" style="flex: 1;">🎥 Video</button>
+        <button id="btn-end-session" class="btn-red" style="flex: 1;">End</button>
+      </div>
+
+      <div id="call-controls" style="display: none; gap: 8px;">
+        <button id="btn-toggle-mic" class="btn-secondary" style="flex: 1;">🎙️ Mic On</button>
+        <button id="btn-toggle-cam" class="btn-secondary" style="flex: 1;">📹 Cam On</button>
+      </div>
+
+      <div id="video-container" class="video-grid">
+        <video id="local-video" autoplay muted playsinline></video>
+        <video id="remote-video" autoplay playsinline></video>
+      </div>
+      <audio id="remote-audio" autoplay></audio>
+    </div>
+  </div>
+
+  <!-- Call Notification Modal -->
+  <div id="call-modal" class="modal">
+    <div class="modal-content">
+      <h3 id="modal-heading" style="color: var(--accent-green);">Incoming Secure Call</h3>
+      <div id="caller-id-text" style="font-size: 13px;"></div>
+      <div style="display: flex; gap: 12px; justify-content: center;">
+        <button id="btn-accept" class="btn-green" style="flex: 1;">Accept</button>
+        <button id="btn-decline" class="btn-red" style="flex: 1;">Decline</button>
       </div>
     </div>
+  </div>
 
-    <div class="features-grid">
-      <div class="feature-card">
-        <h3>🔒 End-to-End Encryption</h3>
-        <p>All calls, files, and text messages are fully encrypted directly between peers using secure WebRTC protocols.</p>
+  <!-- QR Code Modal -->
+  <div id="qr-modal" class="modal">
+    <div class="modal-content">
+      <h3 id="qr-modal-title">Identity QR</h3>
+      <div id="qr-display-container" style="background: #fff; padding: 12px; border-radius: 8px; display: inline-block; margin: 0 auto;">
+        <div id="qrcode"></div>
       </div>
-      <div class="feature-card">
-        <h3>⚡ RAM-Only Storage</h3>
-        <p>No chat history or identity metadata is written to permanent databases. Everything lives securely in active memory.</p>
+      <div id="qr-scanner-container" style="display: none;">
+        <video id="qr-video" style="width: 100%; height: 200px; border-radius: 6px;"></video>
+        <canvas id="qr-canvas" style="display: none;"></canvas>
       </div>
-      <div class="feature-card">
-        <h3>🌐 Global Mesh Network</h3>
-        <p>Connect instantly with anyone worldwide via direct cryptographic keys or quick QR-code scans.</p>
-      </div>
+      <button id="btn-upload-qr-img" class="btn-secondary">Upload QR Image</button>
+      <input type="file" id="qr-file-input" accept="image/*" style="display: none;" />
+      <button id="btn-close-qr" class="btn-red">Close</button>
     </div>
-  </main>
+  </div>
 
-  <footer>
-    &copy; 2026 Ghost Talk Protocol. Secured & Open Source.
-  </footer>
+  <!-- Payment Modal -->
+  <div id="payment-modal" class="modal">
+    <div class="modal-content">
+      <h3>Unlock Anonymous Premium</h3>
+      <p style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">Get unlimited video calls, high-speed file transfers, and custom identity handles.</p>
+      <div style="font-size: 24px; font-weight: bold; color: var(--accent-green);" id="modal-display-price">$9.99 / mo</div>
+      <button id="btn-start-checkout" class="btn-green">Proceed to Secure Checkout</button>
+      <button id="btn-close-payment-modal" class="btn-secondary">Close</button>
+    </div>
+  </div>
 
+  <!-- QR Library script for generating/scanning -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

@@ -5,21 +5,23 @@ const crypto = require('crypto');
 
 const app = express();
 
-
 // --- CLEAN SERVER ROUTING ---
 app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/public/landing.html'); // Main website landing page
+  res.sendFile(__dirname + '/public/landing.html'); // Main website landing page for web visitors
 });
 
 app.get('/app', (req, res) => {
-  res.sendFile(__dirname + '/public/index.html'); // WebRTC Chat App
+  res.sendFile(__dirname + '/public/index.html'); // WebRTC Chat App interface
 });
 
 app.get('/download-apk', (req, res) => {
   res.download(__dirname + '/public/GhostTalk.apk');
 });
 // ----------------------------
+
+// Static files (CSS, JS, assets) served after explicit routes
 app.use(express.static('public'));
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 

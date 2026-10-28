@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ghost Talk — Zero-Trace Encrypted Mesh Communication</title>
+  <style>
+    :root {
+      --bg-dark: #0a0d12;
+      --card-bg: #121824;
+      --border-color: #1e293b;
+      --accent-green: #00ff88;
+      --accent-blue: #00bcd4;
+      --text-main: #e2e8f0;
+      --text-muted: #64748b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', monospace, sans-serif; }
+    body { background: var(--bg-dark); color: var(--text-main); min-height: 100vh; display: flex; flex-direction: column; justify-content: space-between; }
+    
+    header { display: flex; justify-content: space-between; align-items: center; padding: 20px 40px; border-bottom: 1px solid var(--border-color); }
+    .logo { font-size: 20px; font-weight: bold; color: var(--accent-green); display: flex; align-items: center; gap: 8px; }
+    
+    .hero { text-align: center; padding: 80px 20px 40px 20px; max-width: 800px; margin: 0 auto; }
+    .hero h1 { font-size: 42px; margin-bottom: 16px; color: #fff; }
+    .hero h1 span { color: var(--accent-green); }
+    .hero p { font-size: 16px; color: var(--text-muted); margin-bottom: 32px; line-height: 1.6; }
+    
+    .cta-group { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; margin-bottom: 40px; }
+    .btn { padding: 14px 28px; border-radius: 8px; font-weight: bold; font-size: 14px; text-decoration: none; cursor: pointer; transition: all 0.2s ease; display: inline-block; text-align: center; }
+    .btn-primary { background: var(--accent-green); color: #000; border: none; }
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-2px); }
+    .btn-secondary { background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); }
+    .btn-secondary:hover { border-color: var(--accent-blue); color: var(--accent-blue); transform: translateY(-2px); }
+
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; max-width: 900px; margin: 0 auto 80px auto; padding: 0 20px; }
+    .feature-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 24px; text-align: left; }
+    .feature-card h3 { font-size: 15px; color: var(--accent-blue); margin-bottom: 8px; }
+    .feature-card p { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+    footer { text-align: center; padding: 20px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo">🛡️ Ghost Talk</div>
+    <div>
+      <a href="/app" class="btn btn-secondary" style="padding: 8px 16px; font-size: 12px;">Launch Web App</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Secure, Zero-Trace <span>Mesh Communication</span></h1>
+      <p>Experience completely anonymous end-to-end encrypted messaging, voice calls, and video streaming across the globe. No account required. No permanent logs saved.</p>
+      
+      <div class="cta-group">
+        <a href="/app" class="btn btn-primary">🚀 Launch Web App</a>
+        <a href="/download-apk" class="btn btn-secondary">📱 Download Android APK</a>
+      </div>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <h3>🔒 End-to-End Encryption</h3>
+        <p>All calls, files, and text messages are fully encrypted directly between peers using secure WebRTC protocols.</p>
+      </div>
+      <div class="feature-card">
+        <h3>⚡ RAM-Only Storage</h3>
+        <p>No chat history or identity metadata is written to permanent databases. Everything lives securely in active memory.</p>
+      </div>
+      <div class="feature-card">
+        <h3>🌐 Global Mesh Network</h3>
+        <p>Connect instantly with anyone worldwide via direct cryptographic keys or quick QR-code scans.</p>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    &copy; 2026 Ghost Talk Protocol. Secured & Open Source.
+  </footer>
+
+</body>
+</html>

@@ -207,10 +207,15 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      if (data.type === 'register') {
+             if (data.type === 'register') {
         currentKey = data.key.toUpperCase();
         clients.set(currentKey, ws);
         
+        // If client claims premium locally and server doesn't have it yet, honor it or sync it
+        if (data.claimedTier === 'PREMIUM' && !clientTiers.has(currentKey)) {
+          clientTiers.set(currentKey, 'PREMIUM');
+        }
+
         const currentTier = clientTiers.get(currentKey) || 'FREE';
         const expiry = clientExpirations.get(currentKey) || null;
 
@@ -220,7 +225,7 @@ wss.on('connection', (ws, req) => {
           expiresAt: expiry
         }));
         broadcastAdminMetrics();
-      } else if (data.targetKey) {
+      }else if (data.targetKey) {
         const targetKeyUpper = data.targetKey.toUpperCase();
         if (clients.has(targetKeyUpper)) {
           const targetWs = clients.get(targetKeyUpper);

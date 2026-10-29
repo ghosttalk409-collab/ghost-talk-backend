@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
   myIdentity = savedKey;
   if (myIdentityInput) myIdentityInput.value = myIdentity;
 
-  // Local Tier Caching Initialization (Immediate UI feedback on startup)
+  // Robust LocalStorage Tier Caching for APK & Web Clients
   const cachedTier = localStorage.getItem('ghost_tier');
   const cachedExpiry = localStorage.getItem('ghost_tier_expiry');
   if (cachedTier === 'PREMIUM') {
@@ -98,20 +98,14 @@ document.addEventListener('DOMContentLoaded', () => {
       localStorage.removeItem('ghost_tier_expiry');
     } else {
       isPremiumUser = true;
-      if (tierBadge) {
-        tierBadge.innerText = 'PREMIUM TIER';
-        tierBadge.style.background = 'var(--accent-green)';
-        tierBadge.style.color = '#000';
-      }
-      if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'block';
+      applyUIPremiumState(true);
     }
   }
 
-  function applyTierState(tier, expiresAt) {
-    isPremiumUser = (tier === 'PREMIUM');
-    if (isPremiumUser) {
+  function applyUIPremiumState(premium) {
+    isPremiumUser = premium;
+    if (premium) {
       localStorage.setItem('ghost_tier', 'PREMIUM');
-      if (expiresAt) localStorage.setItem('ghost_tier_expiry', expiresAt);
       if (tierBadge) {
         tierBadge.innerText = 'PREMIUM TIER';
         tierBadge.style.background = 'var(--accent-green)';
@@ -201,7 +195,14 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.onopen = () => {
       statusBar.innerText = 'STATUS: ONLINE | SECURED';
       statusBar.classList.remove('offline');
-      socket.send(JSON.stringify({ type: 'register', key: myIdentity }));
+      
+      // Send registration including any locally cached premium status so APK doesn't lose it
+      const currentCachedTier = localStorage.getItem('ghost_tier') || 'FREE';
+      socket.send(JSON.stringify({ 
+        type: 'register', 
+        key: myIdentity, 
+        claimedTier: currentCachedTier 
+      }));
     };
 
     socket.onmessage = async (event) => {
@@ -223,11 +224,13 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'registered':
         logChat('System: Registered on secure mesh.');
         if (msg.tier) {
-          applyTierState(msg.tier, msg.expiresAt);
+          applyUIPremiumState(msg.tier === 'PREMIUM');
+          if (msg.expiresAt) localStorage.setItem('ghost_tier_expiry', msg.expiresAt);
         }
         break;
       case 'tier-updated':
-        applyTierState(msg.tier, msg.expiresAt);
+        applyUIPremiumState(msg.tier === 'PREMIUM');
+        if (msg.expiresAt) localStorage.setItem('ghost_tier_expiry', msg.expiresAt);
         logChat(`System: Tier updated to ${msg.tier}.`);
         if (msg.tier === 'PREMIUM') {
           alert('🎉 Premium Tier Activated Successfully!');

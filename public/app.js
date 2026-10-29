@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
   myIdentity = savedKey;
   if (myIdentityInput) myIdentityInput.value = myIdentity;
 
-  // Robust LocalStorage Tier Caching for APK & Web Clients
+  // Immediate Local Cache Check
   const cachedTier = localStorage.getItem('ghost_tier');
   const cachedExpiry = localStorage.getItem('ghost_tier_expiry');
   if (cachedTier === 'PREMIUM') {
@@ -196,7 +196,7 @@ document.addEventListener('DOMContentLoaded', () => {
       statusBar.innerText = 'STATUS: ONLINE | SECURED';
       statusBar.classList.remove('offline');
       
-      // Send registration including any locally cached premium status so APK doesn't lose it
+      // Send registration and claim cached tier so APK self-heals its server record
       const currentCachedTier = localStorage.getItem('ghost_tier') || 'FREE';
       socket.send(JSON.stringify({ 
         type: 'register', 

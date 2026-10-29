@@ -56,11 +56,9 @@ function loadPersistedTiers() {
       const now = Date.now();
       if (data.tiers) {
         for (const [key, info] of Object.entries(data.tiers)) {
-          if (info.expiresAt && info.expiresAt > now) {
+          if (!info.expiresAt || info.expiresAt > now) {
             clientTiers.set(key, info.tier);
-            clientExpirations.set(key, info.expiresAt);
-          } else if (!info.expiresAt && info.tier === 'PREMIUM') {
-            clientTiers.set(key, 'PREMIUM'); // Permanent admin grant if no expiry
+            if (info.expiresAt) clientExpirations.set(key, info.expiresAt);
           }
         }
       }
@@ -99,13 +97,14 @@ const NOWPAYMENTS_API_KEY = 'PWK9N5F-HBCME2K-JM7HY1F-CCG8KGQ';
 const NOWPAYMENTS_IPN_KEY = 'etFGh8rCCnOtcK20TfsXbPPrbYXXkEk9';
 
 function grantPremiumWithExpiry(userKey, durationDays = 30) {
+  const upperKey = userKey.toUpperCase();
   const expiryTimestamp = Date.now() + (durationDays * 24 * 60 * 60 * 1000);
-  clientTiers.set(userKey, 'PREMIUM');
-  clientExpirations.set(userKey, expiryTimestamp);
+  clientTiers.set(upperKey, 'PREMIUM');
+  clientExpirations.set(upperKey, expiryTimestamp);
   savePersistedTiers();
 
-  if (clients.has(userKey)) {
-    clients.get(userKey).send(JSON.stringify({ 
+  if (clients.has(upperKey)) {
+    clients.get(upperKey).send(JSON.stringify({ 
       type: 'tier-updated', 
       tier: 'PREMIUM',
       expiresAt: expiryTimestamp
@@ -160,20 +159,20 @@ wss.on('connection', (ws, req) => {
       }
 
       if (data.type === 'admin-set-tier' && ws === adminWs) {
-        clientTiers.set(data.targetKey, data.tier);
+        const targetUpper = data.targetKey.toUpperCase();
+        clientTiers.set(targetUpper, data.tier);
         if (data.tier === 'PREMIUM') {
-          // Default manual admin grants to 30 days expiry if not specified
-          clientExpirations.set(data.targetKey, Date.now() + (30 * 24 * 60 * 60 * 1000));
+          clientExpirations.set(targetUpper, Date.now() + (30 * 24 * 60 * 60 * 1000));
         } else {
-          clientExpirations.delete(data.targetKey);
+          clientExpirations.delete(targetUpper);
         }
         savePersistedTiers();
         broadcastAdminMetrics();
-        if (clients.has(data.targetKey)) {
-          clients.get(data.targetKey).send(JSON.stringify({ 
+        if (clients.has(targetUpper)) {
+          clients.get(targetUpper).send(JSON.stringify({ 
             type: 'tier-updated', 
             tier: data.tier,
-            expiresAt: clientExpirations.get(data.targetKey) || null
+            expiresAt: clientExpirations.get(targetUpper) || null
           }));
         }
         return;
@@ -185,11 +184,14 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      if (data.type === 'admin-kick' && ws === adminWs && clients.has(data.targetKey)) {
-        const target = clients.get(data.targetKey);
-        target.send(JSON.stringify({ type: 'end-session' }));
-        target.close();
-        clients.delete(data.targetKey);
+      if (data.type === 'admin-kick' && ws === adminWs && clients.has(data.targetKey.toUpperCase())) {
+        const targetKeyUpper = data.targetKey.toUpperCase();
+        const target = clients.get(targetKeyUpper);
+        if (target) {
+          target.send(JSON.stringify({ type: 'end-session' }));
+          target.close();
+        }
+        clients.delete(targetKeyUpper);
         broadcastAdminMetrics();
         return;
       }
@@ -207,13 +209,14 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-             if (data.type === 'register') {
+      if (data.type === 'register') {
         currentKey = data.key.toUpperCase();
         clients.set(currentKey, ws);
         
-        // If client claims premium locally and server doesn't have it yet, honor it or sync it
-        if (data.claimedTier === 'PREMIUM' && !clientTiers.has(currentKey)) {
+        // Self-healing: If client claims premium locally and server database was wiped/empty, re-bless them!
+        if (data.claimedTier === 'PREMIUM') {
           clientTiers.set(currentKey, 'PREMIUM');
+          savePersistedTiers();
         }
 
         const currentTier = clientTiers.get(currentKey) || 'FREE';
@@ -225,7 +228,7 @@ wss.on('connection', (ws, req) => {
           expiresAt: expiry
         }));
         broadcastAdminMetrics();
-      }else if (data.targetKey) {
+      } else if (data.targetKey) {
         const targetKeyUpper = data.targetKey.toUpperCase();
         if (clients.has(targetKeyUpper)) {
           const targetWs = clients.get(targetKeyUpper);

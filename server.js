@@ -2,6 +2,8 @@ const http = require('http');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 
@@ -40,9 +42,53 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 const clients = new Map();
-const clientTiers = new Map();
-const clientExpirations = new Map();
+let clientTiers = new Map();
+let clientExpirations = new Map();
 let adminWs = null;
+
+// Persistent Tiers Storage File Setup
+const TIERS_FILE = path.join(__dirname, 'tiers.json');
+
+function loadPersistedTiers() {
+  try {
+    if (fs.existsSync(TIERS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(TIERS_FILE, 'utf8'));
+      const now = Date.now();
+      if (data.tiers) {
+        for (const [key, info] of Object.entries(data.tiers)) {
+          if (info.expiresAt && info.expiresAt > now) {
+            clientTiers.set(key, info.tier);
+            clientExpirations.set(key, info.expiresAt);
+          } else if (!info.expiresAt && info.tier === 'PREMIUM') {
+            clientTiers.set(key, 'PREMIUM'); // Permanent admin grant if no expiry
+          }
+        }
+      }
+      console.log(`🛡️ Loaded ${clientTiers.size} active tiers from persistent storage.`);
+    }
+  } catch (e) {
+    console.error('Error loading persistent tiers:', e);
+  }
+}
+
+function savePersistedTiers() {
+  try {
+    const data = { tiers: {} };
+    clientTiers.forEach((tier, key) => {
+      if (tier === 'PREMIUM') {
+        data.tiers[key] = {
+          tier: 'PREMIUM',
+          expiresAt: clientExpirations.get(key) || null
+        };
+      }
+    });
+    fs.writeFileSync(TIERS_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error('Error saving persistent tiers:', e);
+  }
+}
+
+loadPersistedTiers();
 
 let planPricing = {
   monthly: 9.99,
@@ -56,6 +102,7 @@ function grantPremiumWithExpiry(userKey, durationDays = 30) {
   const expiryTimestamp = Date.now() + (durationDays * 24 * 60 * 60 * 1000);
   clientTiers.set(userKey, 'PREMIUM');
   clientExpirations.set(userKey, expiryTimestamp);
+  savePersistedTiers();
 
   if (clients.has(userKey)) {
     clients.get(userKey).send(JSON.stringify({ 
@@ -67,12 +114,15 @@ function grantPremiumWithExpiry(userKey, durationDays = 30) {
   broadcastAdminMetrics();
 }
 
+// Check expirations every 60 seconds
 setInterval(() => {
   const now = Date.now();
+  let updated = false;
   clientExpirations.forEach((expiresAt, userKey) => {
     if (now >= expiresAt) {
       clientTiers.set(userKey, 'FREE');
       clientExpirations.delete(userKey);
+      updated = true;
 
       if (clients.has(userKey)) {
         clients.get(userKey).send(JSON.stringify({ 
@@ -81,9 +131,12 @@ setInterval(() => {
           message: '⌛ Premium pass expired. Reverted to Free Tier.'
         }));
       }
-      broadcastAdminMetrics();
     }
   });
+  if (updated) {
+    savePersistedTiers();
+    broadcastAdminMetrics();
+  }
 }, 60000);
 
 wss.on('connection', (ws, req) => {
@@ -108,10 +161,20 @@ wss.on('connection', (ws, req) => {
 
       if (data.type === 'admin-set-tier' && ws === adminWs) {
         clientTiers.set(data.targetKey, data.tier);
-        clientExpirations.delete(data.targetKey);
+        if (data.tier === 'PREMIUM') {
+          // Default manual admin grants to 30 days expiry if not specified
+          clientExpirations.set(data.targetKey, Date.now() + (30 * 24 * 60 * 60 * 1000));
+        } else {
+          clientExpirations.delete(data.targetKey);
+        }
+        savePersistedTiers();
         broadcastAdminMetrics();
         if (clients.has(data.targetKey)) {
-          clients.get(data.targetKey).send(JSON.stringify({ type: 'tier-updated', tier: data.tier }));
+          clients.get(data.targetKey).send(JSON.stringify({ 
+            type: 'tier-updated', 
+            tier: data.tier,
+            expiresAt: clientExpirations.get(data.targetKey) || null
+          }));
         }
         return;
       }
@@ -127,8 +190,6 @@ wss.on('connection', (ws, req) => {
         target.send(JSON.stringify({ type: 'end-session' }));
         target.close();
         clients.delete(data.targetKey);
-        clientTiers.delete(data.targetKey);
-        clientExpirations.delete(data.targetKey);
         broadcastAdminMetrics();
         return;
       }
@@ -141,8 +202,6 @@ wss.on('connection', (ws, req) => {
           }
         });
         clients.clear();
-        clientTiers.clear();
-        clientExpirations.clear();
         clients.set('ADMIN-ROOT', adminWs);
         broadcastAdminMetrics();
         return;
@@ -151,8 +210,15 @@ wss.on('connection', (ws, req) => {
       if (data.type === 'register') {
         currentKey = data.key.toUpperCase();
         clients.set(currentKey, ws);
-        if (!clientTiers.has(currentKey)) clientTiers.set(currentKey, 'FREE');
-        ws.send(JSON.stringify({ type: 'registered' }));
+        
+        const currentTier = clientTiers.get(currentKey) || 'FREE';
+        const expiry = clientExpirations.get(currentKey) || null;
+
+        ws.send(JSON.stringify({ 
+          type: 'registered',
+          tier: currentTier,
+          expiresAt: expiry
+        }));
         broadcastAdminMetrics();
       } else if (data.targetKey) {
         const targetKeyUpper = data.targetKey.toUpperCase();
@@ -170,8 +236,6 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     if (currentKey) {
       clients.delete(currentKey);
-      clientTiers.delete(currentKey);
-      clientExpirations.delete(currentKey);
       if (currentKey === 'ADMIN-ROOT') adminWs = null;
       broadcastAdminMetrics();
     }

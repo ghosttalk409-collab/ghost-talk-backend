@@ -57,7 +57,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const paymentModal = document.getElementById('payment-modal');
   const btnStartCheckout = document.getElementById('btn-start-checkout');
   const btnClosePaymentModal = document.getElementById('btn-close-payment-modal');
-  const linkManualTokenPrompt = document.getElementById('link-manual-token-prompt');
   const modalDisplayPrice = document.getElementById('modal-display-price');
 
   let socket = null;
@@ -80,13 +79,56 @@ document.addEventListener('DOMContentLoaded', () => {
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
   };
 
+  // Identity Initialization
   let savedKey = localStorage.getItem('ghost_identity');
-if (!savedKey) {
-  savedKey = 'GHOST-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-  localStorage.setItem('ghost_identity', savedKey);
-}
+  if (!savedKey) {
+    savedKey = 'GHOST-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+    localStorage.setItem('ghost_identity', savedKey);
+  }
   myIdentity = savedKey;
   if (myIdentityInput) myIdentityInput.value = myIdentity;
+
+  // Local Tier Caching Initialization (Immediate UI feedback on startup)
+  const cachedTier = localStorage.getItem('ghost_tier');
+  const cachedExpiry = localStorage.getItem('ghost_tier_expiry');
+  if (cachedTier === 'PREMIUM') {
+    if (cachedExpiry && Date.now() >= parseInt(cachedExpiry)) {
+      isPremiumUser = false;
+      localStorage.removeItem('ghost_tier');
+      localStorage.removeItem('ghost_tier_expiry');
+    } else {
+      isPremiumUser = true;
+      if (tierBadge) {
+        tierBadge.innerText = 'PREMIUM TIER';
+        tierBadge.style.background = 'var(--accent-green)';
+        tierBadge.style.color = '#000';
+      }
+      if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'block';
+    }
+  }
+
+  function applyTierState(tier, expiresAt) {
+    isPremiumUser = (tier === 'PREMIUM');
+    if (isPremiumUser) {
+      localStorage.setItem('ghost_tier', 'PREMIUM');
+      if (expiresAt) localStorage.setItem('ghost_tier_expiry', expiresAt);
+      if (tierBadge) {
+        tierBadge.innerText = 'PREMIUM TIER';
+        tierBadge.style.background = 'var(--accent-green)';
+        tierBadge.style.color = '#000';
+      }
+      if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'block';
+    } else {
+      localStorage.removeItem('ghost_tier');
+      localStorage.removeItem('ghost_tier_expiry');
+      if (tierBadge) {
+        tierBadge.innerText = 'FREE TIER';
+        tierBadge.style.background = 'transparent';
+        tierBadge.style.color = 'var(--accent-green)';
+      }
+      if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'none';
+    }
+  }
 
   function logChat(msg) {
     if (!chatBox) return;
@@ -146,9 +188,7 @@ if (!savedKey) {
     return ramContacts.some(c => c.key === key);
   }
 
-      function initWebSocket() {
-    // Automatically uses local port ONLY if you are testing in your local Acode browser.
-    // For anyone else downloading the APK or visiting the website, it uses your public cloud backend!
+  function initWebSocket() {
     const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
                            && window.location.port === '8158';
 
@@ -182,32 +222,18 @@ if (!savedKey) {
     switch (msg.type) {
       case 'registered':
         logChat('System: Registered on secure mesh.');
-        break;
-      case 'redemption-success':
-        isPremiumUser = true;
-        if (tierBadge) {
-          tierBadge.innerText = 'PREMIUM TIER';
-          tierBadge.style.background = 'var(--accent-green)';
-          tierBadge.style.color = '#000';
+        if (msg.tier) {
+          applyTierState(msg.tier, msg.expiresAt);
         }
-        if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'block';
-        logChat(`System: ✅ ${msg.message}`);
-        alert('🎉 Anonymous Premium Unlocked Successfully!');
-        break;
-      case 'redemption-error':
-        logChat(`System: ❌ ${msg.message}`);
-        alert(`❌ Redemption Failed: ${msg.message}`);
         break;
       case 'tier-updated':
-        isPremiumUser = msg.tier === 'PREMIUM';
-        if (tierBadge) {
-          tierBadge.innerText = isPremiumUser ? 'PREMIUM TIER' : 'FREE TIER';
-          tierBadge.style.background = isPremiumUser ? 'var(--accent-green)' : 'transparent';
-          tierBadge.style.color = isPremiumUser ? '#000' : 'var(--accent-green)';
-        }
-        if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = isPremiumUser ? 'block' : 'none';
+        applyTierState(msg.tier, msg.expiresAt);
         logChat(`System: Tier updated to ${msg.tier}.`);
-        if (isPremiumUser) alert('🎉 Premium Tier Activated Successfully!');
+        if (msg.tier === 'PREMIUM') {
+          alert('🎉 Premium Tier Activated Successfully!');
+        } else if (msg.message) {
+          alert(msg.message);
+        }
         break;
       case 'text-notify':
         ensureContact(msg.senderKey, 'Peer');

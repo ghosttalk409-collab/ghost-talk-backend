@@ -213,9 +213,14 @@ wss.on('connection', (ws, req) => {
         currentKey = data.key.toUpperCase();
         clients.set(currentKey, ws);
         
-        // Self-healing: If client claims premium locally and server database was wiped/empty, re-bless them!
+        // Self-healing synchronization: If client claims local premium, honor and store it instantly
         if (data.claimedTier === 'PREMIUM') {
           clientTiers.set(currentKey, 'PREMIUM');
+          if (data.claimedExpiry) {
+            clientExpirations.set(currentKey, parseInt(data.claimedExpiry));
+          } else if (!clientExpirations.has(currentKey)) {
+            clientExpirations.set(currentKey, Date.now() + (30 * 24 * 60 * 60 * 1000));
+          }
           savePersistedTiers();
         }
 

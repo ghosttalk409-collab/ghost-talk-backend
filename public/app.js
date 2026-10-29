@@ -88,20 +88,34 @@ document.addEventListener('DOMContentLoaded', () => {
   myIdentity = savedKey;
   if (myIdentityInput) myIdentityInput.value = myIdentity;
 
-  // --- BULLETPROOF LOCAL TIER LOCK ---
+  // --- BULLETPROOF LOCAL EXPIRY & TIER LOCK ---
   let cachedTier = localStorage.getItem('ghost_tier');
+  let cachedExpiry = localStorage.getItem('ghost_tier_expiry');
+
   if (cachedTier === 'PREMIUM') {
-    isPremiumUser = true;
-    applyUIPremiumState(true);
+    if (cachedExpiry && Date.now() >= parseInt(cachedExpiry)) {
+      isPremiumUser = false;
+      applyUIPremiumState(false);
+      localStorage.removeItem('ghost_tier');
+      localStorage.removeItem('ghost_tier_expiry');
+    } else {
+      isPremiumUser = true;
+      applyUIPremiumState(true);
+    }
   } else {
     isPremiumUser = false;
     applyUIPremiumState(false);
   }
 
-  function applyUIPremiumState(premium) {
+  function applyUIPremiumState(premium, expiresAt = null) {
     isPremiumUser = premium;
     if (premium) {
       localStorage.setItem('ghost_tier', 'PREMIUM');
+      if (expiresAt) {
+        localStorage.setItem('ghost_tier_expiry', expiresAt);
+      } else if (!localStorage.getItem('ghost_tier_expiry')) {
+        localStorage.setItem('ghost_tier_expiry', Date.now() + (30 * 24 * 60 * 60 * 1000));
+      }
       if (tierBadge) {
         tierBadge.innerText = 'PREMIUM TIER';
         tierBadge.style.background = 'var(--accent-green)';
@@ -110,6 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'block';
     } else {
       localStorage.removeItem('ghost_tier');
+      localStorage.removeItem('ghost_tier_expiry');
       if (tierBadge) {
         tierBadge.innerText = 'FREE TIER';
         tierBadge.style.background = 'transparent';
@@ -192,10 +207,13 @@ document.addEventListener('DOMContentLoaded', () => {
       statusBar.classList.remove('offline');
       
       const currentCachedTier = localStorage.getItem('ghost_tier') || 'FREE';
+      const currentCachedExpiry = localStorage.getItem('ghost_tier_expiry') || '';
+
       socket.send(JSON.stringify({ 
         type: 'register', 
         key: myIdentity, 
-        claimedTier: currentCachedTier 
+        claimedTier: currentCachedTier,
+        claimedExpiry: currentCachedExpiry
       }));
     };
 
@@ -218,11 +236,11 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'registered':
         logChat('System: Registered on secure mesh.');
         if (msg.tier === 'PREMIUM') {
-          applyUIPremiumState(true);
+          applyUIPremiumState(true, msg.expiresAt);
         }
         break;
       case 'tier-updated':
-        applyUIPremiumState(msg.tier === 'PREMIUM');
+        applyUIPremiumState(msg.tier === 'PREMIUM', msg.expiresAt);
         logChat(`System: Tier updated to ${msg.tier}.`);
         if (msg.tier === 'PREMIUM') {
           alert('🎉 Premium Tier Activated Successfully!');

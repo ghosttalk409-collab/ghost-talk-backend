@@ -88,18 +88,14 @@ document.addEventListener('DOMContentLoaded', () => {
   myIdentity = savedKey;
   if (myIdentityInput) myIdentityInput.value = myIdentity;
 
-  // Immediate Local Cache Check
-  const cachedTier = localStorage.getItem('ghost_tier');
-  const cachedExpiry = localStorage.getItem('ghost_tier_expiry');
+  // --- BULLETPROOF LOCAL TIER LOCK ---
+  let cachedTier = localStorage.getItem('ghost_tier');
   if (cachedTier === 'PREMIUM') {
-    if (cachedExpiry && Date.now() >= parseInt(cachedExpiry)) {
-      isPremiumUser = false;
-      localStorage.removeItem('ghost_tier');
-      localStorage.removeItem('ghost_tier_expiry');
-    } else {
-      isPremiumUser = true;
-      applyUIPremiumState(true);
-    }
+    isPremiumUser = true;
+    applyUIPremiumState(true);
+  } else {
+    isPremiumUser = false;
+    applyUIPremiumState(false);
   }
 
   function applyUIPremiumState(premium) {
@@ -114,7 +110,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'block';
     } else {
       localStorage.removeItem('ghost_tier');
-      localStorage.removeItem('ghost_tier_expiry');
       if (tierBadge) {
         tierBadge.innerText = 'FREE TIER';
         tierBadge.style.background = 'transparent';
@@ -196,7 +191,6 @@ document.addEventListener('DOMContentLoaded', () => {
       statusBar.innerText = 'STATUS: ONLINE | SECURED';
       statusBar.classList.remove('offline');
       
-      // Send registration and claim cached tier so APK self-heals its server record
       const currentCachedTier = localStorage.getItem('ghost_tier') || 'FREE';
       socket.send(JSON.stringify({ 
         type: 'register', 
@@ -223,14 +217,12 @@ document.addEventListener('DOMContentLoaded', () => {
     switch (msg.type) {
       case 'registered':
         logChat('System: Registered on secure mesh.');
-        if (msg.tier) {
-          applyUIPremiumState(msg.tier === 'PREMIUM');
-          if (msg.expiresAt) localStorage.setItem('ghost_tier_expiry', msg.expiresAt);
+        if (msg.tier === 'PREMIUM') {
+          applyUIPremiumState(true);
         }
         break;
       case 'tier-updated':
         applyUIPremiumState(msg.tier === 'PREMIUM');
-        if (msg.expiresAt) localStorage.setItem('ghost_tier_expiry', msg.expiresAt);
         logChat(`System: Tier updated to ${msg.tier}.`);
         if (msg.tier === 'PREMIUM') {
           alert('🎉 Premium Tier Activated Successfully!');

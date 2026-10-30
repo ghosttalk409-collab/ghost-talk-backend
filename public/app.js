@@ -537,7 +537,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderContacts();
   };
 
-  // --- INTERACTIVE CONTACT RENDER & RENAME SYSTEM ---
+  // --- CLEAN ONE-TAP CONTACT RENDER & RENAME BUTTON ---
   function renderContacts() {
     contactsListContainer.innerHTML = '';
     if (ramContacts.length === 0) {
@@ -549,39 +549,41 @@ document.addEventListener('DOMContentLoaded', () => {
       const isSelected = activeCallTarget === c.key;
       const card = document.createElement('div');
       card.className = `contact-card ${isSelected ? 'selected' : ''}`;
+      card.style.display = 'flex';
+      card.style.alignItems = 'center';
+      card.style.justifyContent = 'space-between';
       
-      card.innerHTML = `<div class="contact-info" style="flex-grow: 1;"><div class="name">${escapeHTML(c.name)}</div><div class="key">${escapeHTML(c.key)}</div></div>`;
+      const infoDiv = document.createElement('div');
+      infoDiv.className = 'contact-info';
+      infoDiv.style.flexGrow = '1';
+      infoDiv.innerHTML = `<div class="name">${escapeHTML(c.name)}</div><div class="key">${escapeHTML(c.key)}</div>`;
       
-      card.onclick = () => {
+      infoDiv.onclick = () => {
         activeCallTarget = c.key;
         renderContacts();
       };
 
-      // Long Press or Right-click context for Rename / Delete
-      let pressTimer = null;
-      card.onmousedown = card.ontouchstart = () => {
-        pressTimer = setTimeout(() => {
-          const action = prompt(`Manage RAM Contact (${c.key}):\nType "rename" to change display name\nType "delete" to wipe from RAM`, "rename");
-          if (action) {
-            const cleanAction = action.trim().toLowerCase();
-            if (cleanAction === 'rename') {
-              const newName = prompt(`Enter new display name for ${c.key}:`, c.name);
-              if (newName && newName.trim().length > 0) {
-                ramContacts[idx].name = newName.trim().substring(0, 16);
-                renderContacts();
-                logChat(`System: Renamed contact to "${ramContacts[idx].name}".`);
-              }
-            } else if (cleanAction === 'delete') {
-              ramContacts.splice(idx, 1);
-              if (activeCallTarget === c.key) activeCallTarget = '';
-              renderContacts();
-              logChat(`System: Contact ${c.key} wiped from RAM.`);
-            }
-          }
-        }, 1000);
+      // One-tap Rename Button
+      const renameBtn = document.createElement('button');
+      renameBtn.innerText = '✏️';
+      renameBtn.title = 'Rename Contact';
+      renameBtn.style.background = 'transparent';
+      renameBtn.style.border = 'none';
+      renameBtn.style.cursor = 'pointer';
+      renameBtn.style.fontSize = '14px';
+      renameBtn.style.padding = '4px 8px';
+      renameBtn.onclick = (e) => {
+        e.stopPropagation();
+        const newName = prompt(`Enter new display name for ${c.key}:`, c.name);
+        if (newName && newName.trim().length > 0) {
+          ramContacts[idx].name = newName.trim().substring(0, 16);
+          renderContacts();
+          logChat(`System: Renamed contact to "${ramContacts[idx].name}".`);
+        }
       };
-      card.onmouseup = card.onmouseleave = card.ontouchend = () => clearTimeout(pressTimer);
 
+      card.appendChild(infoDiv);
+      card.appendChild(renameBtn);
       contactsListContainer.appendChild(card);
     });
   }

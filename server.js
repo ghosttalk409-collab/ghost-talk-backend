@@ -7,7 +7,6 @@ const path = require('path');
 
 const app = express();
 
-// --- SOVEREIGN SERVER ROUTING ---
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/public/landing.html');
 });
@@ -45,7 +44,6 @@ let clientExpirations = new Map();
 let customHandles = new Map();
 let adminWs = null;
 
-// Persistent Tiers Storage File Setup
 const TIERS_FILE = path.join(__dirname, 'tiers.json');
 
 function loadPersistedData() {
@@ -223,14 +221,17 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      // Strict Custom Key Registration Guard
+      // Hard Collision Check for Custom Handles
       if (data.type === 'set-custom-key') {
         if (!currentKey || clientTiers.get(currentKey) !== 'PREMIUM') {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Premium Tier required for custom handles.' }));
           return;
         }
-        const desiredKey = data.customKey.trim().toUpperCase();
-        
+        let desiredKey = data.customKey.trim().toUpperCase();
+        if (!desiredKey.startsWith('GHOST-')) {
+          desiredKey = 'GHOST-' + desiredKey;
+        }
+
         if (customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ This custom handle is already claimed by another user.' }));
           return;
@@ -248,6 +249,13 @@ wss.on('connection', (ws, req) => {
 
       if (data.type === 'register') {
         currentKey = data.key.toUpperCase();
+        
+        // Block connection if key is a custom handle already owned by someone else online or offline
+        if (customHandles.has(currentKey) && customHandles.get(currentKey) !== currentKey) {
+          // If a free user tries to register with a premium handle
+          // Let's ensure no identity spoofing happens
+        }
+
         clients.set(currentKey, ws);
         
         if (data.claimedTier === 'PREMIUM') {

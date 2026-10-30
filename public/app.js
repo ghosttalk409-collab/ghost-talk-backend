@@ -248,6 +248,16 @@ document.addEventListener('DOMContentLoaded', () => {
           alert(msg.message);
         }
         break;
+      case 'custom-key-success':
+        myIdentity = msg.customKey.startsWith('GHOST-') ? msg.customKey : `GHOST-${msg.customKey}`;
+        localStorage.setItem('ghost_identity', myIdentity);
+        if (myIdentityInput) myIdentityInput.value = myIdentity;
+        alert(`✅ Custom Handle Set Successfully: ${myIdentity}`);
+        if (customKeyInput) customKeyInput.value = '';
+        break;
+      case 'custom-key-error':
+        alert(`❌ ${msg.message}`);
+        break;
       case 'text-notify':
         ensureContact(msg.senderKey, 'Peer');
         activeCallTarget = msg.senderKey;
@@ -618,14 +628,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!isPremiumUser) return;
       const desiredKey = customKeyInput.value.trim().toUpperCase();
       if (!desiredKey || desiredKey.length < 3) { alert('Enter valid custom key.'); return; }
-      myIdentity = desiredKey.startsWith('GHOST-') ? desiredKey : `GHOST-${desiredKey}`;
-      localStorage.setItem('ghost_identity', myIdentity);
-      if (myIdentityInput) myIdentityInput.value = myIdentity;
+      
+      // Request custom key verification from server via WebSocket to prevent collisions
       if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'register', key: myIdentity }));
+        socket.send(JSON.stringify({ type: 'set-custom-key', customKey: desiredKey }));
+      } else {
+        alert('❌ Error: Not connected to sovereign mesh server.');
       }
-      alert(`Custom Key Set: ${myIdentity}`);
-      customKeyInput.value = '';
     };
   }
 

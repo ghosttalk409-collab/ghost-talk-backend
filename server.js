@@ -9,14 +9,13 @@ const app = express();
 
 // --- SOVEREIGN SERVER ROUTING ---
 app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/public/landing.html'); // Elite Old Money Landing Page
+  res.sendFile(__dirname + '/public/landing.html');
 });
 
 app.get('/app', (req, res) => {
-  res.sendFile(__dirname + '/public/index.html'); // WebRTC Chat App interface
+  res.sendFile(__dirname + '/public/index.html');
 });
 
-// Secure One-Touch Download Route
 app.get('/download-apk', (req, res) => {
   const apkFilePath = __dirname + '/public/GhostTalk.apk';
   res.download(apkFilePath, 'GhostTalk.apk', (err) => {
@@ -34,7 +33,6 @@ app.get('/download-apk', (req, res) => {
     }
   });
 });
-// ----------------------------
 
 app.use(express.static('public'));
 
@@ -44,12 +42,13 @@ const wss = new WebSocketServer({ server });
 const clients = new Map();
 let clientTiers = new Map();
 let clientExpirations = new Map();
+let customHandles = new Map(); // Maps custom handle -> owner identity key
 let adminWs = null;
 
-// Persistent Tiers Storage File Setup
+// Persistent Tiers & Handles Storage File Setup
 const TIERS_FILE = path.join(__dirname, 'tiers.json');
 
-function loadPersistedTiers() {
+function loadPersistedData() {
   try {
     if (fs.existsSync(TIERS_FILE)) {
       const data = JSON.parse(fs.readFileSync(TIERS_FILE, 'utf8'));
@@ -59,34 +58,42 @@ function loadPersistedTiers() {
           if (!info.expiresAt || info.expiresAt > now) {
             clientTiers.set(key, info.tier);
             if (info.expiresAt) clientExpirations.set(key, info.expiresAt);
+            if (info.customHandle) {
+              customHandles.set(info.customHandle.toUpperCase(), key);
+            }
           }
         }
       }
-      console.log(`🛡️ Loaded ${clientTiers.size} active tiers from persistent storage.`);
+      console.log(`🛡️ Loaded ${clientTiers.size} active tiers & handles from persistent storage.`);
     }
   } catch (e) {
-    console.error('Error loading persistent tiers:', e);
+    console.error('Error loading persistent data:', e);
   }
 }
 
-function savePersistedTiers() {
+function savePersistedData() {
   try {
     const data = { tiers: {} };
     clientTiers.forEach((tier, key) => {
       if (tier === 'PREMIUM') {
+        let userHandle = null;
+        for (const [handle, ownerKey] of customHandles.entries()) {
+          if (ownerKey === key) { userHandle = handle; break; }
+        }
         data.tiers[key] = {
           tier: 'PREMIUM',
-          expiresAt: clientExpirations.get(key) || null
+          expiresAt: clientExpirations.get(key) || null,
+          customHandle: userHandle
         };
       }
     });
     fs.writeFileSync(TIERS_FILE, JSON.stringify(data, null, 2));
   } catch (e) {
-    console.error('Error saving persistent tiers:', e);
+    console.error('Error saving persistent data:', e);
   }
 }
 
-loadPersistedTiers();
+loadPersistedData();
 
 let planPricing = {
   monthly: 9.99,
@@ -101,7 +108,7 @@ function grantPremiumWithExpiry(userKey, durationDays = 30) {
   const expiryTimestamp = Date.now() + (durationDays * 24 * 60 * 60 * 1000);
   clientTiers.set(upperKey, 'PREMIUM');
   clientExpirations.set(upperKey, expiryTimestamp);
-  savePersistedTiers();
+  savePersistedData();
 
   if (clients.has(upperKey)) {
     clients.get(upperKey).send(JSON.stringify({ 
@@ -113,7 +120,6 @@ function grantPremiumWithExpiry(userKey, durationDays = 30) {
   broadcastAdminMetrics();
 }
 
-// Check expirations every 60 seconds
 setInterval(() => {
   const now = Date.now();
   let updated = false;
@@ -121,6 +127,12 @@ setInterval(() => {
     if (now >= expiresAt) {
       clientTiers.set(userKey, 'FREE');
       clientExpirations.delete(userKey);
+      
+      // Clean up any custom handle assigned to expired user
+      for (const [handle, ownerKey] of customHandles.entries()) {
+        if (ownerKey === userKey) { customHandles.delete(handle); break; }
+      }
+
       updated = true;
 
       if (clients.has(userKey)) {
@@ -133,7 +145,7 @@ setInterval(() => {
     }
   });
   if (updated) {
-    savePersistedTiers();
+    savePersistedData();
     broadcastAdminMetrics();
   }
 }, 60000);
@@ -165,8 +177,11 @@ wss.on('connection', (ws, req) => {
           clientExpirations.set(targetUpper, Date.now() + (30 * 24 * 60 * 60 * 1000));
         } else {
           clientExpirations.delete(targetUpper);
+          for (const [handle, ownerKey] of customHandles.entries()) {
+            if (ownerKey === targetUpper) { customHandles.delete(handle); break; }
+          }
         }
-        savePersistedTiers();
+        savePersistedData();
         broadcastAdminMetrics();
         if (clients.has(targetUpper)) {
           clients.get(targetUpper).send(JSON.stringify({ 
@@ -209,11 +224,33 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
+      // Handle Custom Key Registration with Collision Detection
+      if (data.type === 'set-custom-key') {
+        if (!currentKey || clientTiers.get(currentKey) !== 'PREMIUM') {
+          ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Premium Tier required for custom handles.' }));
+          return;
+        }
+        const desiredKey = data.customKey.trim().toUpperCase();
+        if (customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) {
+          ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ This custom handle is already claimed by another user.' }));
+          return;
+        }
+
+        // Clear old handle if user had one
+        for (const [handle, ownerKey] of customHandles.entries()) {
+          if (ownerKey === currentKey) { customHandles.delete(handle); }
+        }
+
+        customHandles.set(desiredKey, currentKey);
+        savePersistedData();
+        ws.send(JSON.stringify({ type: 'custom-key-success', customKey: desiredKey }));
+        return;
+      }
+
       if (data.type === 'register') {
         currentKey = data.key.toUpperCase();
         clients.set(currentKey, ws);
         
-        // Self-healing synchronization: If client claims local premium, honor and store it instantly
         if (data.claimedTier === 'PREMIUM') {
           clientTiers.set(currentKey, 'PREMIUM');
           if (data.claimedExpiry) {
@@ -221,7 +258,7 @@ wss.on('connection', (ws, req) => {
           } else if (!clientExpirations.has(currentKey)) {
             clientExpirations.set(currentKey, Date.now() + (30 * 24 * 60 * 60 * 1000));
           }
-          savePersistedTiers();
+          savePersistedData();
         }
 
         const currentTier = clientTiers.get(currentKey) || 'FREE';

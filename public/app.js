@@ -179,11 +179,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (ringtoneInterval) { clearInterval(ringtoneInterval); ringtoneInterval = null; }
   }
 
-  function ensureContact(key, name = 'Peer') {
+  function ensureContact(key, defaultName = 'Peer') {
     if (!key) return;
     const upperKey = key.toUpperCase();
     if (!ramContacts.some(c => c.key === upperKey)) {
-      ramContacts.push({ name: name.substring(0, 8), key: upperKey });
+      ramContacts.push({ name: defaultName, key: upperKey });
       renderContacts();
     }
   }
@@ -537,6 +537,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderContacts();
   };
 
+  // --- INTERACTIVE CONTACT RENDER & RENAME SYSTEM ---
   function renderContacts() {
     contactsListContainer.innerHTML = '';
     if (ramContacts.length === 0) {
@@ -556,16 +557,28 @@ document.addEventListener('DOMContentLoaded', () => {
         renderContacts();
       };
 
+      // Long Press or Right-click context for Rename / Delete
       let pressTimer = null;
       card.onmousedown = card.ontouchstart = () => {
         pressTimer = setTimeout(() => {
-          if (confirm(`⚠️ Delete RAM contact "${c.name}"?`)) {
-            ramContacts.splice(idx, 1);
-            if (activeCallTarget === c.key) activeCallTarget = '';
-            renderContacts();
-            logChat(`System: Contact ${c.name} wiped.`);
+          const action = prompt(`Manage RAM Contact (${c.key}):\nType "rename" to change display name\nType "delete" to wipe from RAM`, "rename");
+          if (action) {
+            const cleanAction = action.trim().toLowerCase();
+            if (cleanAction === 'rename') {
+              const newName = prompt(`Enter new display name for ${c.key}:`, c.name);
+              if (newName && newName.trim().length > 0) {
+                ramContacts[idx].name = newName.trim().substring(0, 16);
+                renderContacts();
+                logChat(`System: Renamed contact to "${ramContacts[idx].name}".`);
+              }
+            } else if (cleanAction === 'delete') {
+              ramContacts.splice(idx, 1);
+              if (activeCallTarget === c.key) activeCallTarget = '';
+              renderContacts();
+              logChat(`System: Contact ${c.key} wiped from RAM.`);
+            }
           }
-        }, 1500);
+        }, 1000);
       };
       card.onmouseup = card.onmouseleave = card.ontouchend = () => clearTimeout(pressTimer);
 
@@ -629,7 +642,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const desiredKey = customKeyInput.value.trim().toUpperCase();
       if (!desiredKey || desiredKey.length < 3) { alert('Enter valid custom key.'); return; }
       
-      // Request custom key verification from server via WebSocket to prevent collisions
       if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'set-custom-key', customKey: desiredKey }));
       } else {

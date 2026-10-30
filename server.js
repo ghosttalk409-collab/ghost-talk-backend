@@ -42,10 +42,10 @@ const wss = new WebSocketServer({ server });
 const clients = new Map();
 let clientTiers = new Map();
 let clientExpirations = new Map();
-let customHandles = new Map(); // Maps custom handle -> owner identity key
+let customHandles = new Map();
 let adminWs = null;
 
-// Persistent Tiers & Handles Storage File Setup
+// Persistent Tiers Storage File Setup
 const TIERS_FILE = path.join(__dirname, 'tiers.json');
 
 function loadPersistedData() {
@@ -128,7 +128,6 @@ setInterval(() => {
       clientTiers.set(userKey, 'FREE');
       clientExpirations.delete(userKey);
       
-      // Clean up any custom handle assigned to expired user
       for (const [handle, ownerKey] of customHandles.entries()) {
         if (ownerKey === userKey) { customHandles.delete(handle); break; }
       }
@@ -224,19 +223,19 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      // Handle Custom Key Registration with Collision Detection
+      // Strict Custom Key Registration Guard
       if (data.type === 'set-custom-key') {
         if (!currentKey || clientTiers.get(currentKey) !== 'PREMIUM') {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Premium Tier required for custom handles.' }));
           return;
         }
         const desiredKey = data.customKey.trim().toUpperCase();
+        
         if (customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ This custom handle is already claimed by another user.' }));
           return;
         }
 
-        // Clear old handle if user had one
         for (const [handle, ownerKey] of customHandles.entries()) {
           if (ownerKey === currentKey) { customHandles.delete(handle); }
         }

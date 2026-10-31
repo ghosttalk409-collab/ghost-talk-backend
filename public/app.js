@@ -537,7 +537,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderContacts();
   };
 
-  // --- CLEAN ONE-TAP CONTACT RENDER & RENAME BUTTON ---
+  // --- CLEAN ONE-TAP CONTACT RENDER WITH RENAME & DELETE BUTTONS ---
   function renderContacts() {
     contactsListContainer.innerHTML = '';
     if (ramContacts.length === 0) {
@@ -563,6 +563,11 @@ document.addEventListener('DOMContentLoaded', () => {
         renderContacts();
       };
 
+      // Button Action Container
+      const actionDiv = document.createElement('div');
+      actionDiv.style.display = 'flex';
+      actionDiv.style.gap = '4px';
+
       // One-tap Rename Button
       const renameBtn = document.createElement('button');
       renameBtn.innerText = '✏️';
@@ -571,7 +576,7 @@ document.addEventListener('DOMContentLoaded', () => {
       renameBtn.style.border = 'none';
       renameBtn.style.cursor = 'pointer';
       renameBtn.style.fontSize = '14px';
-      renameBtn.style.padding = '4px 8px';
+      renameBtn.style.padding = '4px';
       renameBtn.onclick = (e) => {
         e.stopPropagation();
         const newName = prompt(`Enter new display name for ${c.key}:`, c.name);
@@ -582,8 +587,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       };
 
+      // One-tap Delete Button
+      const deleteBtn = document.createElement('button');
+      deleteBtn.innerText = '🗑️';
+      deleteBtn.title = 'Delete Contact';
+      deleteBtn.style.background = 'transparent';
+      deleteBtn.style.border = 'none';
+      deleteBtn.style.cursor = 'pointer';
+      deleteBtn.style.fontSize = '14px';
+      deleteBtn.style.padding = '4px';
+      deleteBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (confirm(`⚠️ Delete RAM contact "${c.name}"?`)) {
+          ramContacts.splice(idx, 1);
+          if (activeCallTarget === c.key) activeCallTarget = '';
+          renderContacts();
+          logChat(`System: Contact ${c.name} wiped.`);
+        }
+      };
+
+      actionDiv.appendChild(renameBtn);
+      actionDiv.appendChild(deleteBtn);
+
       card.appendChild(infoDiv);
-      card.appendChild(renameBtn);
+      card.appendChild(actionDiv);
       contactsListContainer.appendChild(card);
     });
   }

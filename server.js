@@ -221,7 +221,7 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      // Hard Collision Check for Custom Handles
+      // Strict Bulletproof Custom Handle Uniqueness Guard
       if (data.type === 'set-custom-key') {
         if (!currentKey || clientTiers.get(currentKey) !== 'PREMIUM') {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Premium Tier required for custom handles.' }));
@@ -232,11 +232,13 @@ wss.on('connection', (ws, req) => {
           desiredKey = 'GHOST-' + desiredKey;
         }
 
-        if (customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) {
-          ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ This custom handle is already claimed by another user.' }));
+        // Check against active RAM map and persistent disk storage
+        if ((customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) || clientTiers.has(desiredKey)) {
+          ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ This custom handle is already claimed.' }));
           return;
         }
 
+        // Remove previous handle owned by this user
         for (const [handle, ownerKey] of customHandles.entries()) {
           if (ownerKey === currentKey) { customHandles.delete(handle); }
         }
@@ -249,13 +251,6 @@ wss.on('connection', (ws, req) => {
 
       if (data.type === 'register') {
         currentKey = data.key.toUpperCase();
-        
-        // Block connection if key is a custom handle already owned by someone else online or offline
-        if (customHandles.has(currentKey) && customHandles.get(currentKey) !== currentKey) {
-          // If a free user tries to register with a premium handle
-          // Let's ensure no identity spoofing happens
-        }
-
         clients.set(currentKey, ws);
         
         if (data.claimedTier === 'PREMIUM') {

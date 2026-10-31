@@ -62,11 +62,8 @@ function loadPersistedData() {
           }
         }
       }
-      console.log(`🛡️ Loaded ${clientTiers.size} active tiers & handles from persistent storage.`);
     }
-  } catch (e) {
-    console.error('Error loading persistent data:', e);
-  }
+  } catch (e) {}
 }
 
 function savePersistedData() {
@@ -86,18 +83,12 @@ function savePersistedData() {
       }
     });
     fs.writeFileSync(TIERS_FILE, JSON.stringify(data, null, 2));
-  } catch (e) {
-    console.error('Error saving persistent data:', e);
-  }
+  } catch (e) {}
 }
 
 loadPersistedData();
 
-let planPricing = {
-  monthly: 9.99,
-  yearly: 89.99
-};
-
+let planPricing = { monthly: 9.99, yearly: 89.99 };
 const NOWPAYMENTS_API_KEY = 'PWK9N5F-HBCME2K-JM7HY1F-CCG8KGQ';
 const NOWPAYMENTS_IPN_KEY = 'etFGh8rCCnOtcK20TfsXbPPrbYXXkEk9';
 
@@ -125,30 +116,29 @@ setInterval(() => {
     if (now >= expiresAt) {
       clientTiers.set(userKey, 'FREE');
       clientExpirations.delete(userKey);
-      
       for (const [handle, ownerKey] of customHandles.entries()) {
         if (ownerKey === userKey) { customHandles.delete(handle); break; }
       }
-
       updated = true;
-
       if (clients.has(userKey)) {
-        clients.get(userKey).send(JSON.stringify({ 
-          type: 'tier-updated', 
-          tier: 'FREE',
-          message: '⌛ Premium pass expired. Reverted to Free Tier.'
-        }));
+        clients.get(userKey).send(JSON.stringify({ type: 'tier-updated', tier: 'FREE', message: '⌛ Pass expired.' }));
       }
     }
   });
-  if (updated) {
-    savePersistedData();
-    broadcastAdminMetrics();
-  }
+  if (updated) { savePersistedData(); broadcastAdminMetrics(); }
 }, 60000);
 
 wss.on('connection', (ws, req) => {
   let currentKey = null;
+
+  // Heartbeat ping to keep socket alive through app minimization
+  const heartbeatInterval = setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.ping();
+    } else {
+      clearInterval(heartbeatInterval);
+    }
+  }, 25000);
 
   ws.on('message', (message) => {
     try {
@@ -161,86 +151,25 @@ wss.on('connection', (ws, req) => {
           clients.set(currentKey, ws);
           ws.send(JSON.stringify({ type: 'admin-authenticated', pricing: planPricing }));
           broadcastAdminMetrics();
-        } else {
-          ws.send(JSON.stringify({ type: 'admin-error', message: 'Unauthorized Passphrase.' }));
         }
         return;
       }
 
-      if (data.type === 'admin-set-tier' && ws === adminWs) {
-        const targetUpper = data.targetKey.toUpperCase();
-        clientTiers.set(targetUpper, data.tier);
-        if (data.tier === 'PREMIUM') {
-          clientExpirations.set(targetUpper, Date.now() + (30 * 24 * 60 * 60 * 1000));
-        } else {
-          clientExpirations.delete(targetUpper);
-          for (const [handle, ownerKey] of customHandles.entries()) {
-            if (ownerKey === targetUpper) { customHandles.delete(handle); break; }
-          }
-        }
-        savePersistedData();
-        broadcastAdminMetrics();
-        if (clients.has(targetUpper)) {
-          clients.get(targetUpper).send(JSON.stringify({ 
-            type: 'tier-updated', 
-            tier: data.tier,
-            expiresAt: clientExpirations.get(targetUpper) || null
-          }));
-        }
-        return;
-      }
-
-      if (data.type === 'admin-update-pricing' && ws === adminWs && data.pricing) {
-        planPricing = { ...data.pricing };
-        broadcastAdminMetrics();
-        return;
-      }
-
-      if (data.type === 'admin-kick' && ws === adminWs && clients.has(data.targetKey.toUpperCase())) {
-        const targetKeyUpper = data.targetKey.toUpperCase();
-        const target = clients.get(targetKeyUpper);
-        if (target) {
-          target.send(JSON.stringify({ type: 'end-session' }));
-          target.close();
-        }
-        clients.delete(targetKeyUpper);
-        broadcastAdminMetrics();
-        return;
-      }
-
-      if (data.type === 'admin-wipe-ram' && ws === adminWs) {
-        clients.forEach((clientWs, key) => {
-          if (key !== 'ADMIN-ROOT') {
-            clientWs.send(JSON.stringify({ type: 'end-session' }));
-            clientWs.close();
-          }
-        });
-        clients.clear();
-        clients.set('ADMIN-ROOT', adminWs);
-        broadcastAdminMetrics();
-        return;
-      }
-
-      // Strict Bulletproof Custom Handle Uniqueness Guard
       if (data.type === 'set-custom-key') {
         if (!currentKey || clientTiers.get(currentKey) !== 'PREMIUM') {
-          ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Premium Tier required for custom handles.' }));
+          ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Premium required.' }));
           return;
         }
         let desiredKey = data.customKey.trim().toUpperCase();
-        if (!desiredKey.startsWith('GHOST-')) {
-          desiredKey = 'GHOST-' + desiredKey;
-        }
+        if (!desiredKey.startsWith('GHOST-')) desiredKey = 'GHOST-' + desiredKey;
 
-        // Check against active RAM map and persistent disk storage
         if ((customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) || clientTiers.has(desiredKey)) {
-          ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ This custom handle is already claimed.' }));
+          ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ Handle already claimed.' }));
           return;
         }
 
-        // Remove previous handle owned by this user
         for (const [handle, ownerKey] of customHandles.entries()) {
-          if (ownerKey === currentKey) { customHandles.delete(handle); }
+          if (ownerKey === currentKey) customHandles.delete(handle);
         }
 
         customHandles.set(desiredKey, currentKey);
@@ -266,11 +195,7 @@ wss.on('connection', (ws, req) => {
         const currentTier = clientTiers.get(currentKey) || 'FREE';
         const expiry = clientExpirations.get(currentKey) || null;
 
-        ws.send(JSON.stringify({ 
-          type: 'registered',
-          tier: currentTier,
-          expiresAt: expiry
-        }));
+        ws.send(JSON.stringify({ type: 'registered', tier: currentTier, expiresAt: expiry }));
         broadcastAdminMetrics();
       } else if (data.targetKey) {
         const targetKeyUpper = data.targetKey.toUpperCase();
@@ -286,6 +211,7 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
+    clearInterval(heartbeatInterval);
     if (currentKey) {
       clients.delete(currentKey);
       if (currentKey === 'ADMIN-ROOT') adminWs = null;
@@ -310,77 +236,49 @@ function broadcastAdminMetrics() {
 
   adminWs.send(JSON.stringify({
     type: 'admin-telemetry',
-    metrics: {
-      totalConnections,
-      premiumCount,
-      freeCount: totalConnections - premiumCount,
-      activePeers,
-      pricing: planPricing,
-      ramUsage: (process.memoryUsage().rss / 1024 / 1024).toFixed(2) + ' MB'
-    }
+    metrics: { totalConnections, premiumCount, freeCount: totalConnections - premiumCount, activePeers, pricing: planPricing }
   }));
 }
 
 app.use(express.json());
-
-app.get('/api/payment-info', (req, res) => {
-  res.json({ pricing: planPricing });
-});
-
+app.get('/api/payment-info', (req, res) => res.json({ pricing: planPricing }));
 app.post('/api/create-payment', async (req, res) => {
   try {
     const { userKey, planType } = req.body;
-    if (!userKey) return res.status(400).json({ success: false, message: 'User key required.' });
+    if (!userKey) return res.status(400).json({ success: false });
     const priceAmount = planType === 'yearly' ? planPricing.yearly : planPricing.monthly;
-    
     const response = await fetch('https://api.nowpayments.io/v1/invoice', {
       method: 'POST',
       headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        price_amount: priceAmount,
-        price_currency: 'usd',
-        order_id: userKey,
-        order_description: `Ghost Talk Premium Pass`,
+        price_amount: priceAmount, price_currency: 'usd', order_id: userKey,
+        order_description: `Ghost Talk Pass`,
         ipn_callback_url: 'https://ghost-talk-backend.onrender.com/api/nowpayments-webhook',
-        success_url: 'https://ghosttalk.app/success',
-        cancel_url: 'https://ghosttalk.app/cancel'
+        success_url: 'https://ghosttalk.app/success', cancel_url: 'https://ghosttalk.app/cancel'
       })
     });
     const data = await response.json();
     if (data.invoice_url) res.json({ success: true, invoiceUrl: data.invoice_url });
-    else res.status(400).json({ success: false, message: 'Gateway error.' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error.' });
-  }
+    else res.status(400).json({ success: false });
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.post('/api/nowpayments-webhook', express.raw({ type: 'application/json' }), (req, res) => {
   try {
     const nowpaymentsSig = req.headers['x-nowpayments-sig'];
-    if (!nowpaymentsSig) return res.status(400).send('Missing signature.');
+    if (!nowpaymentsSig) return res.status(400).send('Missing sig.');
     const hmac = crypto.createHmac('sha512', NOWPAYMENTS_IPN_KEY);
     hmac.update(req.body);
-    if (hmac.digest('hex') !== nowpaymentsSig) return res.status(400).send('Invalid signature.');
-
+    if (hmac.digest('hex') !== nowpaymentsSig) return res.status(400).send('Invalid sig.');
     const bodyObj = JSON.parse(req.body.toString());
     if (bodyObj.payment_status === 'finished' || bodyObj.payment_status === 'confirmed') {
       grantPremiumWithExpiry(bodyObj.order_id, 30);
     }
     res.status(200).send('OK');
-  } catch (err) {
-    res.status(500).send('Error');
-  }
-});
-
-app.get('/admin-panel', (req, res) => {
-  if (req.query.key === 'GHOST-USB-KEY-999') {
-    res.sendFile(__dirname + '/public/admin.html');
-  } else {
-    res.status(404).send('Not Found');
-  }
+  } catch (err) { res.status(500).send('Error'); }
 });
 
 const PORT = process.env.PORT || 8158;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🛡️ Ghost Talk Mesh live on port ${PORT}`);
+  console.log(`🛡️ Sovereign Mesh live on port ${PORT}`);
 });

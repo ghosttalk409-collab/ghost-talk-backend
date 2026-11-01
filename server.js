@@ -15,6 +15,15 @@ app.get('/app', (req, res) => {
   res.sendFile(__dirname + '/public/index.html');
 });
 
+// Secure USB Admin Panel Route
+app.get('/admin-panel', (req, res) => {
+  if (req.query.key === 'GHOST-USB-KEY-999') {
+    res.sendFile(__dirname + '/public/admin.html');
+  } else {
+    res.status(404).send('Not Found');
+  }
+});
+
 app.get('/download-apk', (req, res) => {
   const apkFilePath = __dirname + '/public/GhostTalk.apk';
   res.download(apkFilePath, 'GhostTalk.apk', (err) => {
@@ -131,7 +140,6 @@ setInterval(() => {
 wss.on('connection', (ws, req) => {
   let currentKey = null;
 
-  // Heartbeat ping to keep socket alive through app minimization
   const heartbeatInterval = setInterval(() => {
     if (ws.readyState === WebSocket.OPEN) {
       ws.ping();
@@ -151,7 +159,63 @@ wss.on('connection', (ws, req) => {
           clients.set(currentKey, ws);
           ws.send(JSON.stringify({ type: 'admin-authenticated', pricing: planPricing }));
           broadcastAdminMetrics();
+        } else {
+          ws.send(JSON.stringify({ type: 'admin-error', message: 'Unauthorized Passphrase.' }));
         }
+        return;
+      }
+
+      if (data.type === 'admin-set-tier' && ws === adminWs) {
+        const targetUpper = data.targetKey.toUpperCase();
+        clientTiers.set(targetUpper, data.tier);
+        if (data.tier === 'PREMIUM') {
+          clientExpirations.set(targetUpper, Date.now() + (30 * 24 * 60 * 60 * 1000));
+        } else {
+          clientExpirations.delete(targetUpper);
+          for (const [handle, ownerKey] of customHandles.entries()) {
+            if (ownerKey === targetUpper) { customHandles.delete(handle); break; }
+          }
+        }
+        savePersistedData();
+        broadcastAdminMetrics();
+        if (clients.has(targetUpper)) {
+          clients.get(targetUpper).send(JSON.stringify({ 
+            type: 'tier-updated', 
+            tier: data.tier,
+            expiresAt: clientExpirations.get(targetUpper) || null
+          }));
+        }
+        return;
+      }
+
+      if (data.type === 'admin-update-pricing' && ws === adminWs && data.pricing) {
+        planPricing = { ...data.pricing };
+        broadcastAdminMetrics();
+        return;
+      }
+
+      if (data.type === 'admin-kick' && ws === adminWs && clients.has(data.targetKey.toUpperCase())) {
+        const targetKeyUpper = data.targetKey.toUpperCase();
+        const target = clients.get(targetKeyUpper);
+        if (target) {
+          target.send(JSON.stringify({ type: 'end-session' }));
+          target.close();
+        }
+        clients.delete(targetKeyUpper);
+        broadcastAdminMetrics();
+        return;
+      }
+
+      if (data.type === 'admin-wipe-ram' && ws === adminWs) {
+        clients.forEach((clientWs, key) => {
+          if (key !== 'ADMIN-ROOT') {
+            clientWs.send(JSON.stringify({ type: 'end-session' }));
+            clientWs.close();
+          }
+        });
+        clients.clear();
+        clients.set('ADMIN-ROOT', adminWs);
+        broadcastAdminMetrics();
         return;
       }
 

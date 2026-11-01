@@ -204,7 +204,7 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.onopen = () => {
       statusBar.innerText = 'STATUS: ONLINE | SECURED';
       statusBar.classList.remove('offline');
-      reconnectAttempts = 0; // Reset backoff timer on success
+      reconnectAttempts = 0;
       
       const currentCachedTier = localStorage.getItem('ghost_tier') || 'FREE';
       const currentCachedExpiry = localStorage.getItem('ghost_tier_expiry') || '';
@@ -228,7 +228,6 @@ document.addEventListener('DOMContentLoaded', () => {
       statusBar.innerText = 'STATUS: OFFLINE | RECONNECTING...';
       statusBar.classList.add('offline');
       
-      // Exponential backoff to avoid hammering server
       const timeout = Math.min(10000, 1000 * Math.pow(1.5, reconnectAttempts));
       reconnectAttempts++;
       setTimeout(initWebSocket, timeout);
@@ -368,7 +367,6 @@ document.addEventListener('DOMContentLoaded', () => {
     logChat(`System: Calling ${activeCallTarget} ...`);
   }
 
-  // --- REBUILT WEBRTC FOR INSTANT AUDIO/VIDEO LOCK ---
   async function setupWebRTC(wantVideo) {
     if (peerConnection) peerConnection.close();
 
@@ -619,6 +617,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  // --- RESTORED & FIXED QR CODE MODAL / SCANNER LOGIC ---
   if (btnShowQr) {
     btnShowQr.onclick = () => {
       if (!myIdentity) return;
@@ -635,7 +634,103 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-  if (btnCloseQr) btnCloseQr.onclick = () => { if (qrModal) qrModal.style.display = 'none'; };
+  if (btnScanQr) {
+    btnScanQr.onclick = async () => {
+      if (qrModalTitle) qrModalTitle.innerText = 'Scan Contact QR';
+      if (qrDisplayContainer) qrDisplayContainer.style.display = 'none';
+      if (qrScannerContainer) qrScannerContainer.style.display = 'block';
+      if (qrModal) qrModal.style.display = 'flex';
+
+      try {
+        qrCameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } }
+        });
+        if (qrVideo) {
+          qrVideo.srcObject = qrCameraStream;
+          qrVideo.setAttribute('playsinline', true);
+          await qrVideo.play();
+        }
+        requestAnimationFrame(scanQrFrame);
+      } catch (err) {
+        alert('❌ Camera unavailable or permissions denied.');
+        closeQrModal();
+      }
+    };
+  }
+
+  function scanQrFrame() {
+    if (!qrCameraStream || !qrVideo || qrVideo.readyState !== qrVideo.HAVE_ENOUGH_DATA) {
+      qrScanAnimation = requestAnimationFrame(scanQrFrame);
+      return;
+    }
+
+    if (!qrCanvas) return;
+    const ctx = qrCanvas.getContext('2d');
+    qrCanvas.width = qrVideo.videoWidth;
+    qrCanvas.height = qrVideo.videoHeight;
+    ctx.drawImage(qrVideo, 0, 0, qrCanvas.width, qrCanvas.height);
+
+    const imageData = ctx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
+    if (window.jsQR) {
+      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+      if (code && code.data) {
+        let scannedKey = code.data.trim().toUpperCase();
+        if (!scannedKey.startsWith('GHOST-')) scannedKey = 'GHOST-' + scannedKey;
+        if (contactKeyInput) contactKeyInput.value = scannedKey;
+        closeQrModal();
+        alert(`✅ Scanned Key: ${scannedKey}`);
+        return;
+      }
+    }
+    qrScanAnimation = requestAnimationFrame(scanQrFrame);
+  }
+
+  if (btnUploadQrImg && qrFileInput) {
+    btnUploadQrImg.onclick = () => qrFileInput.click();
+    qrFileInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          const imageData = ctx.getImageData(0, 0, img.width, img.height);
+          if (window.jsQR) {
+            const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+            if (code && code.data) {
+              let scannedKey = code.data.trim().toUpperCase();
+              if (!scannedKey.startsWith('GHOST-')) scannedKey = 'GHOST-' + scannedKey;
+              if (contactKeyInput) contactKeyInput.value = scannedKey;
+              closeQrModal();
+              alert(`✅ Scanned Key: ${scannedKey}`);
+            } else {
+              alert('❌ No valid QR code detected in image.');
+            }
+          }
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+      qrFileInput.value = '';
+    };
+  }
+
+  function stopQrCamera() {
+    if (qrScanAnimation) { cancelAnimationFrame(qrScanAnimation); qrScanAnimation = null; }
+    if (qrCameraStream) { qrCameraStream.getTracks().forEach(t => t.stop()); qrCameraStream = null; }
+  }
+
+  function closeQrModal() {
+    stopQrCamera();
+    if (qrModal) qrModal.style.display = 'none';
+  }
+
+  if (btnCloseQr) btnCloseQr.onclick = closeQrModal;
 
   btnWipe.onclick = () => {
     endCall(true);

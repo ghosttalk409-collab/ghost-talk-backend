@@ -8,24 +8,24 @@ const path = require('path');
 const app = express();
 
 app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/public/landing.html');
+  res.sendFile(path.join(__dirname, 'public', 'landing.html'));
 });
 
 app.get('/app', (req, res) => {
-  res.sendFile(__dirname + '/public/index.html');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Secure USB Admin Panel Route
 app.get('/admin-panel', (req, res) => {
   if (req.query.key === 'GHOST-USB-KEY-999') {
-    res.sendFile(__dirname + '/public/admin.html');
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
   } else {
     res.status(404).send('Not Found');
   }
 });
 
 app.get('/download-apk', (req, res) => {
-  const apkFilePath = __dirname + '/public/GhostTalk.apk';
+  const apkFilePath = path.join(__dirname, 'public', 'GhostTalk.apk');
   res.download(apkFilePath, 'GhostTalk.apk', (err) => {
     if (err) {
       res.status(404).send(`
@@ -34,7 +34,7 @@ app.get('/download-apk', (req, res) => {
         <head><meta charset="UTF-8"><title>Direct Download Notice</title></head>
         <body style="background:#0b0f0e; color:#f3f4f6; font-family:sans-serif; text-align:center; padding-top:120px;">
           <h2 style="color:#d4af37; font-family:serif; font-size:28px;">Sovereign Package Preparing</h2>
-          <p style="color:#9ca3af; margin-top:16px; font-size:15px;">The local APK binary is currently queued for packaging. In the meantime, you can launch the <a href="/app" style="color:#d4af37; text-decoration:underline;">Secure Web Client</a> instantly.</p>
+          <p style="color:#9ca3af; margin-top:16px; font-size:15px;">The local APK binary is queued. Launch the <a href="/app" style="color:#d4af37; text-decoration:underline;">Secure Web Client</a> instantly.</p>
         </body>
         </html>
       `);
@@ -45,15 +45,16 @@ app.get('/download-apk', (req, res) => {
 app.use(express.static('public'));
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, maxPayload: 10 * 1024 * 1024 });
 
-const clients = new Map();
-let clientTiers = new Map();
-let clientExpirations = new Map();
-let customHandles = new Map();
+const clients = new Map();         // Key -> WebSocket
+const clientTiers = new Map();     // Key -> 'FREE' | 'PREMIUM'
+const clientExpirations = new Map(); // Key -> Timestamp
+const customHandles = new Map();   // Handle -> Key
 let adminWs = null;
 
 const TIERS_FILE = path.join(__dirname, 'tiers.json');
+const HANDLE_REGEX = /^GHOST-[A-Z0-9]{3,16}$/;
 
 function loadPersistedData() {
   try {
@@ -62,17 +63,21 @@ function loadPersistedData() {
       const now = Date.now();
       if (data.tiers) {
         for (const [key, info] of Object.entries(data.tiers)) {
+          const upperKey = key.toUpperCase();
           if (!info.expiresAt || info.expiresAt > now) {
-            clientTiers.set(key, info.tier);
-            if (info.expiresAt) clientExpirations.set(key, info.expiresAt);
+            clientTiers.set(upperKey, info.tier);
+            if (info.expiresAt) clientExpirations.set(upperKey, info.expiresAt);
             if (info.customHandle) {
-              customHandles.set(info.customHandle.toUpperCase(), key);
+              customHandles.set(info.customHandle.toUpperCase(), upperKey);
             }
           }
         }
       }
+      console.log(`🛡️ Loaded ${clientTiers.size} persistent profiles.`);
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error('Storage load error:', e);
+  }
 }
 
 function savePersistedData() {
@@ -92,7 +97,9 @@ function savePersistedData() {
       }
     });
     fs.writeFileSync(TIERS_FILE, JSON.stringify(data, null, 2));
-  } catch (e) {}
+  } catch (e) {
+    console.error('Storage save error:', e);
+  }
 }
 
 loadPersistedData();
@@ -108,16 +115,14 @@ function grantPremiumWithExpiry(userKey, durationDays = 30) {
   clientExpirations.set(upperKey, expiryTimestamp);
   savePersistedData();
 
-  if (clients.has(upperKey)) {
-    clients.get(upperKey).send(JSON.stringify({ 
-      type: 'tier-updated', 
-      tier: 'PREMIUM',
-      expiresAt: expiryTimestamp
-    }));
+  const ws = clients.get(upperKey);
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'tier-updated', tier: 'PREMIUM', expiresAt: expiryTimestamp }));
   }
   broadcastAdminMetrics();
 }
 
+// Background Tier Cleaner
 setInterval(() => {
   const now = Date.now();
   let updated = false;
@@ -129,26 +134,32 @@ setInterval(() => {
         if (ownerKey === userKey) { customHandles.delete(handle); break; }
       }
       updated = true;
-      if (clients.has(userKey)) {
-        clients.get(userKey).send(JSON.stringify({ type: 'tier-updated', tier: 'FREE', message: '⌛ Pass expired.' }));
+      const ws = clients.get(userKey);
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'tier-updated', tier: 'FREE', message: '⌛ Pass expired.' }));
       }
     }
   });
   if (updated) { savePersistedData(); broadcastAdminMetrics(); }
 }, 60000);
 
-wss.on('connection', (ws, req) => {
+wss.on('connection', (ws) => {
   let currentKey = null;
+  let messageCount = 0;
 
+  const rateLimitInterval = setInterval(() => { messageCount = 0; }, 1000);
   const heartbeatInterval = setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.ping();
-    } else {
-      clearInterval(heartbeatInterval);
-    }
-  }, 25000);
+    if (ws.readyState === 1) ws.ping();
+    else clearInterval(heartbeatInterval);
+  }, 15000);
 
   ws.on('message', (message) => {
+    messageCount++;
+    if (messageCount > 50) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Rate limit exceeded.' }));
+      return;
+    }
+
     try {
       const data = JSON.parse(message);
 
@@ -178,12 +189,9 @@ wss.on('connection', (ws, req) => {
         }
         savePersistedData();
         broadcastAdminMetrics();
-        if (clients.has(targetUpper)) {
-          clients.get(targetUpper).send(JSON.stringify({ 
-            type: 'tier-updated', 
-            tier: data.tier,
-            expiresAt: clientExpirations.get(targetUpper) || null
-          }));
+        const target = clients.get(targetUpper);
+        if (target && target.readyState === 1) {
+          target.send(JSON.stringify({ type: 'tier-updated', tier: data.tier, expiresAt: clientExpirations.get(targetUpper) || null }));
         }
         return;
       }
@@ -194,7 +202,7 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      if (data.type === 'admin-kick' && ws === adminWs && clients.has(data.targetKey.toUpperCase())) {
+      if (data.type === 'admin-kick' && ws === adminWs) {
         const targetKeyUpper = data.targetKey.toUpperCase();
         const target = clients.get(targetKeyUpper);
         if (target) {
@@ -227,7 +235,12 @@ wss.on('connection', (ws, req) => {
         let desiredKey = data.customKey.trim().toUpperCase();
         if (!desiredKey.startsWith('GHOST-')) desiredKey = 'GHOST-' + desiredKey;
 
-        if ((customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) || clientTiers.has(desiredKey)) {
+        if (!HANDLE_REGEX.test(desiredKey)) {
+          ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Invalid format.' }));
+          return;
+        }
+
+        if ((customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) || clients.has(desiredKey)) {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ Handle already claimed.' }));
           return;
         }
@@ -246,16 +259,7 @@ wss.on('connection', (ws, req) => {
         currentKey = data.key.toUpperCase();
         clients.set(currentKey, ws);
         
-        if (data.claimedTier === 'PREMIUM') {
-          clientTiers.set(currentKey, 'PREMIUM');
-          if (data.claimedExpiry) {
-            clientExpirations.set(currentKey, parseInt(data.claimedExpiry));
-          } else if (!clientExpirations.has(currentKey)) {
-            clientExpirations.set(currentKey, Date.now() + (30 * 24 * 60 * 60 * 1000));
-          }
-          savePersistedData();
-        }
-
+        // Authoritative server-side tier lookup (prevents client tampering)
         const currentTier = clientTiers.get(currentKey) || 'FREE';
         const expiry = clientExpirations.get(currentKey) || null;
 
@@ -263,9 +267,11 @@ wss.on('connection', (ws, req) => {
         broadcastAdminMetrics();
       } else if (data.targetKey) {
         const targetKeyUpper = data.targetKey.toUpperCase();
-        if (clients.has(targetKeyUpper)) {
-          const targetWs = clients.get(targetKeyUpper);
-          if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+        const targetAddress = customHandles.get(targetKeyUpper) || targetKeyUpper;
+        
+        if (clients.has(targetAddress)) {
+          const targetWs = clients.get(targetAddress);
+          if (targetWs && targetWs.readyState === 1) {
             data.senderKey = currentKey === 'ADMIN-ROOT' ? 'ADMIN DASHBOARD' : currentKey;
             targetWs.send(JSON.stringify(data));
           }
@@ -275,6 +281,7 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
+    clearInterval(rateLimitInterval);
     clearInterval(heartbeatInterval);
     if (currentKey) {
       clients.delete(currentKey);
@@ -286,21 +293,34 @@ wss.on('connection', (ws, req) => {
 
 function broadcastAdminMetrics() {
   if (!adminWs || adminWs.readyState !== 1) return;
-  const totalConnections = Math.max(0, clients.size - 1);
-  let premiumCount = 0;
   const activePeers = [];
+  const dormantPeers = [];
 
+  // Compile active connections
   clients.forEach((ws, key) => {
     if (key !== 'ADMIN-ROOT') {
       const tier = clientTiers.get(key) || 'FREE';
-      if (tier === 'PREMIUM') premiumCount++;
-      activePeers.push({ key, tier });
+      const expiresAt = clientExpirations.get(key) || null;
+      activePeers.push({ key, tier, status: 'ONLINE', expiresAt });
+    }
+  });
+
+  // Compile dormant registered peers from memory/storage
+  clientTiers.forEach((tier, key) => {
+    if (!clients.has(key)) {
+      const expiresAt = clientExpirations.get(key) || null;
+      dormantPeers.push({ key, tier, status: 'DORMANT', expiresAt });
     }
   });
 
   adminWs.send(JSON.stringify({
     type: 'admin-telemetry',
-    metrics: { totalConnections, premiumCount, freeCount: totalConnections - premiumCount, activePeers, pricing: planPricing }
+    metrics: { 
+      totalConnections: clients.size - 1, 
+      activePeers, 
+      dormantPeers, 
+      pricing: planPricing 
+    }
   }));
 }
 

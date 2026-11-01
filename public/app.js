@@ -66,11 +66,13 @@ document.addEventListener('DOMContentLoaded', () => {
   let localStream = null;
   let micMuted = false;
   let camOff = false;
-  let ringtoneInterval = null;
   let qrCameraStream = null;
   let qrScanAnimation = null;
   let ramContacts = [];
   let reconnectAttempts = 0;
+  
+  let callState = 'IDLE'; // 'IDLE' | 'CALLING' | 'CONNECTED'
+  let pendingSocketQueue = [];
 
   const security = new SecurityGuard();
   const frameCrypto = new FrameCrypto();
@@ -82,28 +84,6 @@ document.addEventListener('DOMContentLoaded', () => {
     ]
   };
 
-  // --- INJECT OLD MONEY LUXURY THEME OVERRIDES (No Neon) ---
-  const styleInject = document.createElement('style');
-  styleInject.innerHTML = `
-    :root {
-      --bg-deep: #0e1110;
-      --bg-card: #141817;
-      --accent-gold: #c5a059;
-      --accent-gold-hover: #d4af37;
-      --text-main: #e2e8f0;
-      --text-muted: #8892b0;
-      --border-subtle: #232d2a;
-    }
-    body { background-color: var(--bg-deep) !important; color: var(--text-main) !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important; }
-    .contact-card, .panel, .card, div[style*="background"] { border-color: var(--border-subtle) !important; }
-    button, .btn { background: #1a2220 !important; color: var(--accent-gold) !important; border: 1px solid var(--accent-gold) !important; border-radius: 4px !important; transition: all 0.3s ease; }
-    button:hover { background: var(--accent-gold) !important; color: #000 !important; }
-    #tier-badge { background: #1a2220 !important; color: var(--accent-gold) !important; border: 1px solid var(--accent-gold) !important; font-weight: 600; letter-spacing: 1px; }
-    input, select, textarea { background: #0b0e0d !important; color: var(--text-main) !important; border: 1px solid #232d2a !important; border-radius: 4px !important; }
-    input:focus { border-color: var(--accent-gold) !important; outline: none !important; }
-  `;
-  document.head.appendChild(styleInject);
-
   let savedKey = localStorage.getItem('ghost_identity');
   if (!savedKey) {
     savedKey = 'GHOST-' + Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -112,37 +92,13 @@ document.addEventListener('DOMContentLoaded', () => {
   myIdentity = savedKey;
   if (myIdentityInput) myIdentityInput.value = myIdentity;
 
-  let cachedTier = localStorage.getItem('ghost_tier');
-  let cachedExpiry = localStorage.getItem('ghost_tier_expiry');
-
-  if (cachedTier === 'PREMIUM') {
-    if (cachedExpiry && Date.now() >= parseInt(cachedExpiry)) {
-      isPremiumUser = false;
-      applyUIPremiumState(false);
-      localStorage.removeItem('ghost_tier');
-      localStorage.removeItem('ghost_tier_expiry');
-    } else {
-      isPremiumUser = true;
-      applyUIPremiumState(true);
-    }
-  } else {
-    isPremiumUser = false;
-    applyUIPremiumState(false);
-  }
-
   function applyUIPremiumState(premium, expiresAt = null) {
     isPremiumUser = premium;
     if (premium) {
       localStorage.setItem('ghost_tier', 'PREMIUM');
       if (expiresAt) localStorage.setItem('ghost_tier_expiry', expiresAt);
-      else if (!localStorage.getItem('ghost_tier_expiry')) {
-        localStorage.setItem('ghost_tier_expiry', Date.now() + (30 * 24 * 60 * 60 * 1000));
-      }
       if (tierBadge) {
         tierBadge.innerText = 'PREMIUM TIER';
-        tierBadge.style.background = '#1a2220';
-        tierBadge.style.color = '#c5a059';
-        tierBadge.style.borderColor = '#c5a059';
       }
       if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'block';
     } else {
@@ -150,13 +106,14 @@ document.addEventListener('DOMContentLoaded', () => {
       localStorage.removeItem('ghost_tier_expiry');
       if (tierBadge) {
         tierBadge.innerText = 'FREE TIER';
-        tierBadge.style.background = 'transparent';
-        tierBadge.style.color = '#8892b0';
-        tierBadge.style.borderColor = '#232d2a';
       }
       if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'none';
     }
   }
+
+  // Instant server cache read for fast UI setup
+  const cachedTier = localStorage.getItem('ghost_tier');
+  if (cachedTier === 'PREMIUM') applyUIPremiumState(true);
 
   function logChat(msg) {
     if (!chatBox) return;
@@ -175,7 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (fileType && fileType.startsWith('image/')) {
       div.innerHTML = `<strong>${shortKey} [Image]:</strong> ${safeName}<br><img src="${fileData}" style="max-width: 150px; border-radius: 4px; margin-top: 4px;">`;
     } else {
-      div.innerHTML = `<strong>${shortKey} [File]:</strong> <a href="${fileData}" download="${safeName}" style="color: #c5a059; text-decoration: underline;">📁 Download ${safeName}</a>`;
+      div.innerHTML = `<strong>${shortKey} [File]:</strong> <a href="${fileData}" download="${safeName}" style="color: var(--accent-gold); text-decoration: underline;">📁 Download ${safeName}</a>`;
     }
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
@@ -194,10 +151,26 @@ document.addEventListener('DOMContentLoaded', () => {
     return ramContacts.some(c => c.key === key);
   }
 
-  // --- ROBUST WEBSOCKET WITH EXPONENTIAL BACKOFF RECONNECTION ---
+  function safeSend(dataObj) {
+    const jsonStr = JSON.stringify(dataObj);
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(jsonStr);
+    } else {
+      pendingSocketQueue.push(jsonStr);
+    }
+  }
+
+  function flushSocketQueue() {
+    while (pendingSocketQueue.length > 0 && socket && socket.readyState === WebSocket.OPEN) {
+      const msg = pendingSocketQueue.shift();
+      socket.send(msg);
+    }
+  }
+
+  // Instant connection initializer
   function initWebSocket() {
     const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '8158';
-    const socketUrl = isLocalBrowser ? 'ws://127.0.0.1:8158' : 'wss://ghost-talk-backend.onrender.com';
+    const socketUrl = isLocalBrowser ? 'ws://127.0.0.1:8158' : `wss://${window.location.host}`;
 
     socket = new WebSocket(socketUrl);
 
@@ -215,6 +188,8 @@ document.addEventListener('DOMContentLoaded', () => {
         claimedTier: currentCachedTier,
         claimedExpiry: currentCachedExpiry
       }));
+
+      flushSocketQueue();
     };
 
     socket.onmessage = async (event) => {
@@ -227,22 +202,19 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.onclose = () => {
       statusBar.innerText = 'STATUS: OFFLINE | RECONNECTING...';
       statusBar.classList.add('offline');
-      
       const timeout = Math.min(10000, 1000 * Math.pow(1.5, reconnectAttempts));
       reconnectAttempts++;
       setTimeout(initWebSocket, timeout);
     };
 
-    socket.onerror = () => {
-      socket.close();
-    };
+    socket.onerror = () => { socket.close(); };
   }
 
   async function handleSignalingMessage(msg) {
     switch (msg.type) {
       case 'registered':
         logChat('System: Registered on secure mesh.');
-        if (msg.tier === 'PREMIUM') applyUIPremiumState(true, msg.expiresAt);
+        applyUIPremiumState(msg.tier === 'PREMIUM', msg.expiresAt);
         break;
       case 'tier-updated':
         applyUIPremiumState(msg.tier === 'PREMIUM', msg.expiresAt);
@@ -264,8 +236,8 @@ document.addEventListener('DOMContentLoaded', () => {
         renderContacts();
         break;
       case 'offer':
-        if (peerConnection) {
-          socket.send(JSON.stringify({ type: 'decline', targetKey: msg.senderKey }));
+        if (peerConnection || callState !== 'IDLE') {
+          safeSend({ type: 'decline', targetKey: msg.senderKey });
           return;
         }
         ensureContact(msg.senderKey, 'Caller');
@@ -286,20 +258,23 @@ document.addEventListener('DOMContentLoaded', () => {
           await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.offer));
           const answer = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(answer);
-          socket.send(JSON.stringify({ type: 'answer', targetKey: activeCallTarget, answer }));
+          safeSend({ type: 'answer', targetKey: activeCallTarget, answer });
+          callState = 'CONNECTED';
           logChat('System: Call connected.');
         };
 
         btnDecline.onclick = () => {
           callModal.style.display = 'none';
-          socket.send(JSON.stringify({ type: 'decline', targetKey: msg.senderKey }));
+          safeSend({ type: 'decline', targetKey: msg.senderKey });
           activeCallTarget = '';
+          callState = 'IDLE';
           renderContacts();
         };
         break;
       case 'answer':
         if (peerConnection) {
           await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.answer));
+          callState = 'CONNECTED';
           logChat('System: Secure stream established.');
         }
         break;
@@ -333,6 +308,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function startCall(wantVideo) {
+    if (callState !== 'IDLE') {
+      alert('Call already in progress.');
+      return;
+    }
     if (!activeCallTarget || !isValidContact(activeCallTarget)) {
       alert('Select a valid contact first.');
       return;
@@ -352,17 +331,18 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    callState = 'CALLING';
     await setupWebRTC(wantVideo);
 
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
 
-    socket.send(JSON.stringify({
+    safeSend({
       type: 'offer',
       targetKey: activeCallTarget,
       offer,
       hasVideo: wantVideo
-    }));
+    });
 
     logChat(`System: Calling ${activeCallTarget} ...`);
   }
@@ -373,8 +353,8 @@ document.addEventListener('DOMContentLoaded', () => {
     peerConnection = new RTCPeerConnection(rtcConfig);
 
     peerConnection.onicecandidate = (e) => {
-      if (e.candidate && activeCallTarget && socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'ice-candidate', targetKey: activeCallTarget, candidate: e.candidate }));
+      if (e.candidate && activeCallTarget) {
+        safeSend({ type: 'ice-candidate', targetKey: activeCallTarget, candidate: e.candidate });
       }
     };
 
@@ -405,8 +385,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function endCall(notifyPeer = true) {
-    if (notifyPeer && activeCallTarget && socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: 'end-session', targetKey: activeCallTarget }));
+    if (notifyPeer && activeCallTarget) {
+      safeSend({ type: 'end-session', targetKey: activeCallTarget });
     }
     if (callModal) callModal.style.display = 'none';
 
@@ -427,6 +407,7 @@ document.addEventListener('DOMContentLoaded', () => {
     chatBox.innerHTML = '';
     chatInput.value = '';
 
+    callState = 'IDLE';
     micMuted = false;
     camOff = false;
     if (btnToggleMic) btnToggleMic.innerText = '🎙️ Mic On';
@@ -460,14 +441,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnChat.onclick = () => {
     if (!activeCallTarget || !isValidContact(activeCallTarget)) { alert('Select a contact.'); return; }
-    socket.send(JSON.stringify({ type: 'text-notify', targetKey: activeCallTarget }));
+    safeSend({ type: 'text-notify', targetKey: activeCallTarget });
     logChat(`System: Chat session ready.`);
   };
 
   btnSend.onclick = () => {
     const text = chatInput.value.trim();
     if (!text || !activeCallTarget || !isValidContact(activeCallTarget)) return;
-    socket.send(JSON.stringify({ type: 'chat', targetKey: activeCallTarget, text }));
+    safeSend({ type: 'chat', targetKey: activeCallTarget, text });
     logChat(`Me: ${escapeHTML(text)}`);
     chatInput.value = '';
   };
@@ -476,20 +457,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnAttach && fileInput) {
     btnAttach.onclick = () => {
-      if (!isPremiumUser) { alert('Premium Feature.'); return; }
-      if (!activeCallTarget) { alert('Select contact.'); return; }
+      if (!isPremiumUser) { alert('Premium Feature required.'); return; }
+      if (!activeCallTarget) { alert('Select contact first.'); return; }
       fileInput.click();
     };
 
     fileInput.onchange = (e) => {
       const file = e.target.files[0];
       if (!file) return;
+      if (file.size > 5 * 1024 * 1024) {
+        alert('⚠️ File size exceeds 5MB RAM ceiling.');
+        fileInput.value = '';
+        return;
+      }
       const reader = new FileReader();
       reader.onload = (evt) => {
-        socket.send(JSON.stringify({
+        safeSend({
           type: 'file-transfer', targetKey: activeCallTarget,
           fileName: file.name, fileType: file.type, fileData: evt.target.result
-        }));
+        });
         logChat(`Me [File]: ${escapeHTML(file.name)}`);
         fileInput.value = '';
       };
@@ -526,28 +512,35 @@ document.addEventListener('DOMContentLoaded', () => {
       card.style.marginBottom = '6px';
       card.style.background = isSelected ? '#1a2220' : '#141817';
       card.style.borderRadius = '4px';
-      card.style.border = '1px solid #232d2a';
+      card.style.border = isSelected ? '1px solid var(--accent-gold)' : '1px solid #232d2a';
       
       const infoDiv = document.createElement('div');
       infoDiv.style.flexGrow = '1';
       infoDiv.style.cursor = 'pointer';
       infoDiv.innerHTML = `<div style="font-weight:600; color:#e2e8f0;">${escapeHTML(c.name)}</div><div style="font-size:11px; color:#8892b0;">${escapeHTML(c.key)}</div>`;
+      
       infoDiv.onclick = () => {
         activeCallTarget = c.key;
         renderContacts();
       };
 
-      const actionDiv = document.createElement('div');
-      actionDiv.style.display = 'flex';
-      actionDiv.style.gap = '6px';
+      const menuContainer = document.createElement('div');
+      menuContainer.className = 'menu-container';
 
-      const renameBtn = document.createElement('button');
-      renameBtn.innerText = '✏️';
-      renameBtn.style.background = 'transparent';
-      renameBtn.style.border = 'none';
-      renameBtn.style.cursor = 'pointer';
-      renameBtn.onclick = (e) => {
+      const dotBtn = document.createElement('button');
+      dotBtn.className = 'dot-btn';
+      dotBtn.innerText = '⋮';
+      dotBtn.title = 'Options';
+
+      const dropdownMenu = document.createElement('div');
+      dropdownMenu.className = 'dropdown-menu';
+
+      const renameItem = document.createElement('button');
+      renameItem.className = 'dropdown-item';
+      renameItem.innerText = '✏️ Rename';
+      renameItem.onclick = (e) => {
         e.stopPropagation();
+        dropdownMenu.classList.remove('show');
         const newName = prompt(`Rename contact ${c.key}:`, c.name);
         if (newName && newName.trim().length > 0) {
           ramContacts[idx].name = newName.trim().substring(0, 16);
@@ -555,25 +548,39 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       };
 
-      const deleteBtn = document.createElement('button');
-      deleteBtn.innerText = '🗑️';
-      deleteBtn.style.background = 'transparent';
-      deleteBtn.style.border = 'none';
-      deleteBtn.style.cursor = 'pointer';
-      deleteBtn.onclick = (e) => {
+      const deleteItem = document.createElement('button');
+      deleteItem.className = 'dropdown-item';
+      deleteItem.innerText = '🗑️ Delete';
+      deleteItem.onclick = (e) => {
         e.stopPropagation();
-        ramContacts.splice(idx, 1);
-        if (activeCallTarget === c.key) activeCallTarget = '';
-        renderContacts();
+        dropdownMenu.classList.remove('show');
+        if (confirm(`Delete contact ${c.name}?`)) {
+          ramContacts.splice(idx, 1);
+          if (activeCallTarget === c.key) activeCallTarget = '';
+          renderContacts();
+        }
       };
 
-      actionDiv.appendChild(renameBtn);
-      actionDiv.appendChild(deleteBtn);
+      dotBtn.onclick = (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.dropdown-menu').forEach(m => { if (m !== dropdownMenu) m.classList.remove('show'); });
+        dropdownMenu.classList.toggle('show');
+      };
+
+      dropdownMenu.appendChild(renameItem);
+      dropdownMenu.appendChild(deleteItem);
+      menuContainer.appendChild(dotBtn);
+      menuContainer.appendChild(dropdownMenu);
+
       card.appendChild(infoDiv);
-      card.appendChild(actionDiv);
+      card.appendChild(menuContainer);
       contactsListContainer.appendChild(card);
     });
   }
+
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('show'));
+  });
 
   tierBadge.onclick = async () => {
     if (isPremiumUser) { alert('✨ Premium active.'); return; }
@@ -611,13 +618,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!isPremiumUser) return;
       const desiredKey = customKeyInput.value.trim().toUpperCase();
       if (!desiredKey || desiredKey.length < 3) { alert('Invalid key.'); return; }
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'set-custom-key', customKey: desiredKey }));
-      }
+      safeSend({ type: 'set-custom-key', customKey: desiredKey });
     };
   }
 
-  // --- RESTORED & FIXED QR CODE MODAL / SCANNER LOGIC ---
   if (btnShowQr) {
     btnShowQr.onclick = () => {
       if (!myIdentity) return;

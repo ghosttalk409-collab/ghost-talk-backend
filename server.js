@@ -51,11 +51,11 @@ const wss = new WebSocketServer({
 });
 
 // --- SCALABLE IN-MEMORY MAPPINGS & REGISTRIES ---
-const clients = new Map();         // Key (Upper) -> WebSocket instance
-const wsToKey = new Map();         // WebSocket instance -> Key (Upper) [Universal Lookup]
+const clients = new Map();         // Key/Handle (Upper) -> WebSocket instance
+const wsToKey = new Map();         // WebSocket instance -> Key (Upper)
 const clientTiers = new Map();     // Key (Upper) -> 'FREE' | 'PREMIUM'
 const clientExpirations = new Map(); // Key (Upper) -> Timestamp
-const customHandles = new Map();   // Handle (Upper) -> Key (Upper)
+const customHandles = new Map();   // Handle (Upper) -> Owner Base Key (Upper)
 let adminWs = null;
 
 const TIERS_FILE = path.join(__dirname, 'tiers.json');
@@ -134,7 +134,11 @@ setInterval(() => {
       clientTiers.set(userKey, 'FREE');
       clientExpirations.delete(userKey);
       for (const [handle, ownerKey] of customHandles.entries()) {
-        if (ownerKey === userKey) { customHandles.delete(handle); break; }
+        if (ownerKey === userKey) { 
+          clients.delete(handle);
+          customHandles.delete(handle); 
+          break; 
+        }
       }
       updated = true;
       const ws = clients.get(userKey);
@@ -192,7 +196,11 @@ wss.on('connection', (ws) => {
         } else {
           clientExpirations.delete(targetUpper);
           for (const [handle, ownerKey] of customHandles.entries()) {
-            if (ownerKey === targetUpper) { customHandles.delete(handle); break; }
+            if (ownerKey === targetUpper) { 
+              clients.delete(handle);
+              customHandles.delete(handle); 
+              break; 
+            }
           }
         }
         savePersistedData();
@@ -222,6 +230,9 @@ wss.on('connection', (ws) => {
           target.close();
         }
         clients.delete(targetKeyUpper);
+        for (const [handle, ownerKey] of customHandles.entries()) {
+          if (ownerKey === targetKeyUpper) clients.delete(handle);
+        }
         broadcastAdminMetrics();
         return;
       }
@@ -261,8 +272,12 @@ wss.on('connection', (ws) => {
           return;
         }
 
+        // Clean up old handle owned by this user
         for (const [handle, ownerKey] of customHandles.entries()) {
-          if (ownerKey === currentKey) customHandles.delete(handle);
+          if (ownerKey === currentKey) {
+            clients.delete(handle);
+            customHandles.delete(handle);
+          }
         }
 
         customHandles.set(desiredKey, currentKey);
@@ -271,6 +286,7 @@ wss.on('connection', (ws) => {
         return;
       }
 
+      // Universal Registration with Dual-Key Socket Mapping
       if (data.type === 'register') {
         const regKey = data.key.toUpperCase();
         const oldKey = wsToKey.get(ws);
@@ -280,6 +296,14 @@ wss.on('connection', (ws) => {
 
         wsToKey.set(ws, regKey);
         clients.set(regKey, ws);
+
+        // If this registered key owns a custom handle, map the custom handle to this socket too!
+        for (const [handle, ownerKey] of customHandles.entries()) {
+          if (ownerKey === regKey || handle === regKey) {
+            clients.set(handle, ws);
+            clients.set(ownerKey, ws);
+          }
+        }
         
         const existingTier = clientTiers.get(regKey);
         const resolvedTier = existingTier === 'PREMIUM' || data.claimedTier === 'PREMIUM' ? 'PREMIUM' : 'FREE';
@@ -309,14 +333,21 @@ wss.on('connection', (ws) => {
         if (!senderKey) return;
 
         const targetKeyUpper = data.targetKey.toUpperCase();
-        const targetAddress = customHandles.get(targetKeyUpper) || targetKeyUpper;
+        // Dual resolution: check direct clients map first, then customHandles fallback
+        let targetAddress = targetKeyUpper;
+        if (!clients.has(targetAddress) && customHandles.has(targetAddress)) {
+          targetAddress = customHandles.get(targetAddress);
+        }
         
         if (clients.has(targetAddress)) {
           const targetWs = clients.get(targetAddress);
           if (targetWs && targetWs.readyState === 1) {
             let senderHandle = senderKey;
             for (const [handle, ownerKey] of customHandles.entries()) {
-              if (ownerKey === senderKey) { senderHandle = handle; break; }
+              if (ownerKey === senderKey || handle === senderKey) { 
+                senderHandle = handle; 
+                break; 
+              }
             }
             data.senderKey = senderKey === 'ADMIN-ROOT' ? 'ADMIN DASHBOARD' : senderHandle;
             targetWs.send(JSON.stringify(data));
@@ -332,6 +363,9 @@ wss.on('connection', (ws) => {
     const closedKey = wsToKey.get(ws);
     if (closedKey) {
       clients.delete(closedKey);
+      for (const [handle, ownerKey] of customHandles.entries()) {
+        if (ownerKey === closedKey || handle === closedKey) clients.delete(handle);
+      }
       wsToKey.delete(ws);
       if (closedKey === 'ADMIN-ROOT') adminWs = null;
       broadcastAdminMetrics();
@@ -341,21 +375,27 @@ wss.on('connection', (ws) => {
 
 function broadcastAdminMetrics() {
   if (!adminWs || adminWs.readyState !== 1) return;
-  const totalConnections = Math.max(0, clients.size - 1);
-  let premiumCount = 0;
   const activePeers = [];
+  const uniqueKeys = new Set();
 
   clients.forEach((ws, key) => {
     if (key !== 'ADMIN-ROOT') {
-      const tier = clientTiers.get(key) || 'FREE';
-      if (tier === 'PREMIUM') premiumCount++;
-      activePeers.push({ key, tier });
+      const baseOwnerKey = customHandles.get(key) || key;
+      if (!uniqueKeys.has(baseOwnerKey)) {
+        uniqueKeys.add(baseOwnerKey);
+        const tier = clientTiers.get(baseOwnerKey) || 'FREE';
+        let userHandle = baseOwnerKey;
+        for (const [handle, ownerKey] of customHandles.entries()) {
+          if (ownerKey === baseOwnerKey) { userHandle = handle; break; }
+        }
+        activePeers.push({ key: userHandle, tier });
+      }
     }
   });
 
   adminWs.send(JSON.stringify({
     type: 'admin-telemetry',
-    metrics: { totalConnections, premiumCount, freeCount: totalConnections - premiumCount, activePeers, pricing: planPricing }
+    metrics: { totalConnections: uniqueKeys.size, activePeers, pricing: planPricing }
   }));
 }
 

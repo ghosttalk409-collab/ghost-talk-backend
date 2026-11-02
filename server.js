@@ -185,7 +185,6 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      // Restored Custom Handle Registration & Anti-Piracy Duplicate Prevention
       if (data.type === 'set-custom-key') {
         if (!currentKey || clientTiers.get(currentKey) !== 'PREMIUM') {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Premium required.' }));
@@ -208,9 +207,14 @@ wss.on('connection', (ws) => {
           if (ownerKey === currentKey) customHandles.delete(handle);
         }
 
+        clients.delete(currentKey); // Remove old socket mapping
         customHandles.set(desiredKey, currentKey);
+        currentKey = desiredKey; // FIX: Update active session key so routing matches new handle
+        clients.set(currentKey, ws); // Re-map socket to new handle
+
         savePersistedData();
         ws.send(JSON.stringify({ type: 'custom-key-success', customKey: desiredKey }));
+        broadcastAdminMetrics();
         return;
       }
 

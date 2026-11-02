@@ -141,6 +141,9 @@ wss.on('connection', (ws) => {
           clientExpirations.set(targetUpper, Date.now() + (30 * 24 * 60 * 60 * 1000));
         } else {
           clientExpirations.delete(targetUpper);
+          for (const [handle, ownerKey] of customHandles.entries()) {
+            if (ownerKey === targetUpper) { customHandles.delete(handle); break; }
+          }
         }
         savePersistedData();
         broadcastAdminMetrics();
@@ -179,6 +182,35 @@ wss.on('connection', (ws) => {
         clients.clear();
         clients.set('ADMIN-ROOT', adminWs);
         broadcastAdminMetrics();
+        return;
+      }
+
+      // Restored Custom Handle Registration & Anti-Piracy Duplicate Prevention
+      if (data.type === 'set-custom-key') {
+        if (!currentKey || clientTiers.get(currentKey) !== 'PREMIUM') {
+          ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Premium required.' }));
+          return;
+        }
+        let desiredKey = data.customKey.trim().toUpperCase();
+        if (!desiredKey.startsWith('GHOST-')) desiredKey = 'GHOST-' + desiredKey;
+
+        if (!HANDLE_REGEX.test(desiredKey)) {
+          ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Invalid format.' }));
+          return;
+        }
+
+        if ((customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) || clients.has(desiredKey)) {
+          ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ Handle already claimed.' }));
+          return;
+        }
+
+        for (const [handle, ownerKey] of customHandles.entries()) {
+          if (ownerKey === currentKey) customHandles.delete(handle);
+        }
+
+        customHandles.set(desiredKey, currentKey);
+        savePersistedData();
+        ws.send(JSON.stringify({ type: 'custom-key-success', customKey: desiredKey }));
         return;
       }
 

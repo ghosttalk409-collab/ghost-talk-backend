@@ -7,14 +7,17 @@ const path = require('path');
 
 const app = express();
 
+// 1. CLIENT GATEWAY (Landing page with Web App & APK download options)
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'landing.html'));
 });
 
+// Direct Web App launch route
 app.get('/app', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// 2. ADMIN COMMAND DASHBOARD LINK (Accessed via secret query key)
 app.get('/admin-panel', (req, res) => {
   if (req.query.key === 'GHOST-USB-KEY-999') {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));

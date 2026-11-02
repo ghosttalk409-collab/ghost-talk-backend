@@ -273,24 +273,16 @@ document.addEventListener('DOMContentLoaded', () => {
         applyUIPremiumState(msg.tier === 'PREMIUM', msg.expiresAt);
         logChat(`System: Tier updated to ${msg.tier}.`);
         break;
-      case 'custom-key-success':
+            case 'custom-key-success':
         myIdentity = msg.customKey.startsWith('GHOST-') ? msg.customKey : `GHOST-${msg.customKey}`;
         localStorage.setItem('ghost_identity', myIdentity);
         if (myIdentityInput) myIdentityInput.value = myIdentity;
 
-        // Re-register websocket with server immediately to update reverse mapping
-        safeSend({
-          type: 'register',
-          key: myIdentity,
-          claimedTier: 'PREMIUM',
-          claimedExpiry: localStorage.getItem('ghost_tier_expiry') || ''
-        });
-
         alert(`✅ Custom Handle Set: ${myIdentity}`);
         if (customKeyInput) customKeyInput.value = '';
-        break;
-      case 'custom-key-error':
-        alert(`❌ ${msg.message}`);
+
+        // Force a clean, fresh WebSocket re-connection under the new custom identity for APK stability
+        initWebSocket();
         break;
       case 'text-notify':
         ensureContact(msg.senderKey, 'Peer');

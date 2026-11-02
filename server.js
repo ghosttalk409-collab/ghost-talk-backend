@@ -16,7 +16,6 @@ app.get('/app', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Secure USB Admin Panel Route
 app.get('/admin-panel', (req, res) => {
   if (req.query.key === 'GHOST-USB-KEY-999') {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
@@ -48,41 +47,18 @@ app.use(express.static('public'));
 const server = http.createServer(app);
 const wss = new WebSocketServer({ 
   server, 
-  maxPayload: 10 * 1024 * 1024 // Expanded to 10MB to accommodate file attachments safely
-});
-
-wss.on('connection', (ws) => {
-  let messageCount = 0;
-  
-  // Rate limiter window reset every second
-  const rateLimitInterval = setInterval(() => {
-    messageCount = 0;
-  }, 1000);
-
-  ws.on('message', (message) => {
-    messageCount++;
-    if (messageCount > 40) { // Hard cap: 40 messages per second per client
-      ws.send(JSON.stringify({ type: 'error', message: 'Rate limit exceeded. Slow down.' }));
-      return;
-    }
-    // ... rest of message handler
-  });
-
-  ws.on('close', () => {
-    clearInterval(rateLimitInterval);
-  });
+  maxPayload: 10 * 1024 * 1024 
 });
 
 // --- SCALABLE IN-MEMORY MAPPINGS & REGISTRIES ---
 const clients = new Map();         // Key (Upper) -> WebSocket instance
+const wsToKey = new Map();         // WebSocket instance -> Key (Upper) [Universal Lookup]
 const clientTiers = new Map();     // Key (Upper) -> 'FREE' | 'PREMIUM'
 const clientExpirations = new Map(); // Key (Upper) -> Timestamp
 const customHandles = new Map();   // Handle (Upper) -> Key (Upper)
 let adminWs = null;
 
 const TIERS_FILE = path.join(__dirname, 'tiers.json');
-
-// Handle Validation RegExp: Must start with GHOST-, followed by 3-16 Alphanumeric chars
 const HANDLE_REGEX = /^GHOST-[A-Z0-9]{3,16}$/;
 
 function loadPersistedData() {
@@ -102,11 +78,8 @@ function loadPersistedData() {
           }
         }
       }
-      console.log(`🛡️ Loaded ${clientTiers.size} persistent tiers & handles.`);
     }
-  } catch (e) {
-    console.error('Error loading persistent storage:', e);
-  }
+  } catch (e) {}
 }
 
 function savePersistedData() {
@@ -126,9 +99,7 @@ function savePersistedData() {
       }
     });
     fs.writeFileSync(TIERS_FILE, JSON.stringify(data, null, 2));
-  } catch (e) {
-    console.error('Error persisting tiers:', e);
-  }
+  } catch (e) {}
 }
 
 loadPersistedData();
@@ -155,7 +126,6 @@ function grantPremiumWithExpiry(userKey, durationDays = 30) {
   broadcastAdminMetrics();
 }
 
-// Background Tier Expiration Cleaner (Runs every 60s)
 setInterval(() => {
   const now = Date.now();
   let updated = false;
@@ -176,11 +146,13 @@ setInterval(() => {
   if (updated) { savePersistedData(); broadcastAdminMetrics(); }
 }, 60000);
 
-// --- WEBSOCKET MESH DISPATCHER ---
 wss.on('connection', (ws) => {
-  let currentKey = null;
+  let messageCount = 0;
+  
+  const rateLimitInterval = setInterval(() => {
+    messageCount = 0;
+  }, 1000);
 
-  // Connection Heartbeat
   const heartbeatInterval = setInterval(() => {
     if (ws.readyState === 1) {
       ws.ping();
@@ -190,15 +162,20 @@ wss.on('connection', (ws) => {
   }, 25000);
 
   ws.on('message', (message) => {
+    messageCount++;
+    if (messageCount > 40) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Rate limit exceeded. Slow down.' }));
+      return;
+    }
+
     try {
       const data = JSON.parse(message);
 
-      // 1. Admin Authentication
       if (data.type === 'admin-auth') {
         if (data.secret === 'GHOST-ADMIN-PASS-2026') {
           adminWs = ws;
-          currentKey = 'ADMIN-ROOT';
-          clients.set(currentKey, ws);
+          wsToKey.set(ws, 'ADMIN-ROOT');
+          clients.set('ADMIN-ROOT', ws);
           ws.send(JSON.stringify({ type: 'admin-authenticated', pricing: planPricing }));
           broadcastAdminMetrics();
         } else {
@@ -207,7 +184,6 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      // 2. Admin Actions
       if (data.type === 'admin-set-tier' && ws === adminWs) {
         const targetUpper = data.targetKey.toUpperCase();
         clientTiers.set(targetUpper, data.tier);
@@ -259,32 +235,32 @@ wss.on('connection', (ws) => {
         });
         clients.clear();
         clients.set('ADMIN-ROOT', adminWs);
+        wsToKey.set(ws, 'ADMIN-ROOT');
         broadcastAdminMetrics();
         return;
       }
 
-      // 3. Custom Handle Registration (Sanitized & Checked)
       if (data.type === 'set-custom-key') {
-        if (!currentKey || clientTiers.get(currentKey) !== 'PREMIUM') {
+        const currentKey = wsToKey.get(ws);
+        const userTier = clientTiers.get(currentKey) || data.claimedTier || 'FREE';
+        
+        if (!currentKey || userTier !== 'PREMIUM') {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Premium tier required for custom handles.' }));
           return;
         }
         let desiredKey = data.customKey.trim().toUpperCase();
         if (!desiredKey.startsWith('GHOST-')) desiredKey = 'GHOST-' + desiredKey;
 
-        // Validation against regex format
         if (!HANDLE_REGEX.test(desiredKey)) {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: 'Format must be GHOST-[A-Z0-9] (3-16 chars).' }));
           return;
         }
 
-        // Global collision check against active handles and client keys
         if ((customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) || clients.has(desiredKey)) {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ This custom handle is already claimed.' }));
           return;
         }
 
-        // Wipe old handle owned by current user
         for (const [handle, ownerKey] of customHandles.entries()) {
           if (ownerKey === currentKey) customHandles.delete(handle);
         }
@@ -295,35 +271,54 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      // 4. Registration & Peer Relay
       if (data.type === 'register') {
-        currentKey = data.key.toUpperCase();
-        clients.set(currentKey, ws);
+        const regKey = data.key.toUpperCase();
+        const oldKey = wsToKey.get(ws);
+        if (oldKey && oldKey !== regKey) {
+          clients.delete(oldKey);
+        }
+
+        wsToKey.set(ws, regKey);
+        clients.set(regKey, ws);
         
-        if (data.claimedTier === 'PREMIUM') {
-          clientTiers.set(currentKey, 'PREMIUM');
+        const existingTier = clientTiers.get(regKey);
+        const resolvedTier = existingTier === 'PREMIUM' || data.claimedTier === 'PREMIUM' ? 'PREMIUM' : 'FREE';
+        
+        clientTiers.set(regKey, resolvedTier);
+        if (resolvedTier === 'PREMIUM') {
           if (data.claimedExpiry) {
-            clientExpirations.set(currentKey, parseInt(data.claimedExpiry));
-          } else if (!clientExpirations.has(currentKey)) {
-            clientExpirations.set(currentKey, Date.now() + (30 * 24 * 60 * 60 * 1000));
+            clientExpirations.set(regKey, parseInt(data.claimedExpiry));
+          } else if (!clientExpirations.has(regKey)) {
+            clientExpirations.set(regKey, Date.now() + (30 * 24 * 60 * 60 * 1000));
           }
           savePersistedData();
         }
 
-        const currentTier = clientTiers.get(currentKey) || 'FREE';
-        const expiry = clientExpirations.get(currentKey) || null;
+        const currentTier = clientTiers.get(regKey) || 'FREE';
+        const expiry = clientExpirations.get(regKey) || null;
 
         ws.send(JSON.stringify({ type: 'registered', tier: currentTier, expiresAt: expiry }));
         broadcastAdminMetrics();
       } else if (data.targetKey) {
+        let senderKey = wsToKey.get(ws);
+        if (!senderKey && data.key) {
+          senderKey = data.key.toUpperCase();
+          wsToKey.set(ws, senderKey);
+          clients.set(senderKey, ws);
+        }
+        if (!senderKey) return;
+
         const targetKeyUpper = data.targetKey.toUpperCase();
-        // Resolve custom handle routing if targetKey is an alias
         const targetAddress = customHandles.get(targetKeyUpper) || targetKeyUpper;
         
         if (clients.has(targetAddress)) {
           const targetWs = clients.get(targetAddress);
           if (targetWs && targetWs.readyState === 1) {
-            data.senderKey = currentKey === 'ADMIN-ROOT' ? 'ADMIN DASHBOARD' : currentKey;
+            let senderHandle = senderKey;
+            for (const [handle, ownerKey] of customHandles.entries()) {
+              if (ownerKey === senderKey) { senderHandle = handle; break; }
+            }
+            data.senderKey = senderKey === 'ADMIN-ROOT' ? 'ADMIN DASHBOARD' : senderHandle;
             targetWs.send(JSON.stringify(data));
           }
         }
@@ -332,10 +327,13 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    clearInterval(rateLimitInterval);
     clearInterval(heartbeatInterval);
-    if (currentKey) {
-      clients.delete(currentKey);
-      if (currentKey === 'ADMIN-ROOT') adminWs = null;
+    const closedKey = wsToKey.get(ws);
+    if (closedKey) {
+      clients.delete(closedKey);
+      wsToKey.delete(ws);
+      if (closedKey === 'ADMIN-ROOT') adminWs = null;
       broadcastAdminMetrics();
     }
   });

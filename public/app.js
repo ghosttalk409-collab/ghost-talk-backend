@@ -66,14 +66,12 @@ document.addEventListener('DOMContentLoaded', () => {
   let localStream = null;
   let micMuted = false;
   let camOff = false;
-  let ringtoneInterval = null;
   let qrCameraStream = null;
   let qrScanAnimation = null;
   let ramContacts = [];
   let reconnectAttempts = 0;
   
-  // STATE MACHINE & BUFFER QUEUE
-  let callState = 'IDLE'; // 'IDLE' | 'CALLING' | 'CONNECTED'
+  let callState = 'IDLE';
   let pendingSocketQueue = [];
 
   const security = new SecurityGuard();
@@ -86,7 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
     ]
   };
 
-  // --- THEME & MENU STYLES ---
+  // --- OLD MONEY MATTE DARK & GOLD THEME ---
   const styleInject = document.createElement('style');
   styleInject.innerHTML = `
     :root {
@@ -207,7 +205,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return ramContacts.some(c => c.key === key);
   }
 
-  // --- SAFE WEBSOCKET SENDER (Prevents crashes when reconnecting) ---
   function safeSend(dataObj) {
     const jsonStr = JSON.stringify(dataObj);
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -280,6 +277,15 @@ document.addEventListener('DOMContentLoaded', () => {
         myIdentity = msg.customKey.startsWith('GHOST-') ? msg.customKey : `GHOST-${msg.customKey}`;
         localStorage.setItem('ghost_identity', myIdentity);
         if (myIdentityInput) myIdentityInput.value = myIdentity;
+
+        // Re-register websocket with server immediately to update reverse mapping
+        safeSend({
+          type: 'register',
+          key: myIdentity,
+          claimedTier: 'PREMIUM',
+          claimedExpiry: localStorage.getItem('ghost_tier_expiry') || ''
+        });
+
         alert(`✅ Custom Handle Set: ${myIdentity}`);
         if (customKeyInput) customKeyInput.value = '';
         break;
@@ -511,7 +517,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   chatInput.onkeypress = (e) => { if (e.key === 'Enter') btnSend.click(); };
 
-  // --- HARDENED FILE ATTACHMENT HANDLER (5MB Cap) ---
   if (btnAttach && fileInput) {
     btnAttach.onclick = () => {
       if (!isPremiumUser) { alert('Premium Feature required.'); return; }
@@ -551,7 +556,6 @@ document.addEventListener('DOMContentLoaded', () => {
     renderContacts();
   };
 
-  // --- PERFECTED CONTACT RENDER WITH VISUAL SELECTION & 3-DOT MENU ---
   function renderContacts() {
     contactsListContainer.innerHTML = '';
     if (ramContacts.length === 0) {

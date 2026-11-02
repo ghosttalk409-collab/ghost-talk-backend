@@ -46,7 +46,32 @@ app.get('/download-apk', (req, res) => {
 app.use(express.static('public'));
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ 
+  server, 
+  maxPayload: 10 * 1024 * 1024 // Expanded to 10MB to accommodate file attachments safely
+});
+
+wss.on('connection', (ws) => {
+  let messageCount = 0;
+  
+  // Rate limiter window reset every second
+  const rateLimitInterval = setInterval(() => {
+    messageCount = 0;
+  }, 1000);
+
+  ws.on('message', (message) => {
+    messageCount++;
+    if (messageCount > 40) { // Hard cap: 40 messages per second per client
+      ws.send(JSON.stringify({ type: 'error', message: 'Rate limit exceeded. Slow down.' }));
+      return;
+    }
+    // ... rest of message handler
+  });
+
+  ws.on('close', () => {
+    clearInterval(rateLimitInterval);
+  });
+});
 
 // --- SCALABLE IN-MEMORY MAPPINGS & REGISTRIES ---
 const clients = new Map();         // Key (Upper) -> WebSocket instance

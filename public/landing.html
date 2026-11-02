@@ -3,157 +3,118 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ghost Talk - Secure Admin Panel</title>
+  <title>Ghost Talk — Absolute Privacy, Without Compromise</title>
   <style>
-    :root { --bg-dark: #0e1110; --card-bg: #141817; --border-color: #232d2a; --accent-gold: #c5a059; --accent-red: #d95764; --text-main: #e2e8f0; --text-muted: #8892b0; }
+    :root {
+      --bg-dark: #0e1110;
+      --card-bg: #141817;
+      --border-subtle: #232d2a;
+      --accent-gold: #c5a059;
+      --accent-gold-hover: #d4af37;
+      --text-main: #e2e8f0;
+      --text-muted: #8892b0;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background: var(--bg-dark); color: var(--text-main); padding: 16px; font-size: 13px; }
-    .header-bar { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); margin-bottom: 16px; }
-    .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: 600; font-size: 10px; background: #1a2220; color: var(--accent-gold); border: 1px solid var(--accent-gold); letter-spacing: 1px; }
-    .grid-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
-    .card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-    .card-title { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 12px; display: flex; justify-content: space-between; letter-spacing: 0.5px; }
-    #metricsCanvas { width: 100%; height: 160px; background: #0b0e0d; border-radius: 6px; border: 1px solid var(--border-color); }
-    table { width: 100%; border-collapse: collapse; text-align: left; }
-    th, td { padding: 8px; border-bottom: 1px solid var(--border-color); font-size: 12px; }
-    th { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .btn { background: #1a2220; border: 1px solid var(--accent-gold); color: var(--accent-gold); padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600; transition: all 0.2s; }
-    .btn:hover { background: var(--accent-gold); color: #000; }
-    .btn-danger { border-color: var(--accent-red); color: var(--accent-red); background: rgba(217,87,100,0.1); }
-    .btn-danger:hover { background: var(--accent-red); color: #000; }
-    input[type="number"] { width: 100%; background: #0b0e0d; border: 1px solid var(--border-color); color: var(--text-main); padding: 8px; margin: 4px 0 12px 0; border-radius: 4px; font-family: monospace; }
-    input:focus { border-color: var(--accent-gold); outline: none; }
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+      text-align: center;
+    }
+    .hero-container {
+      max-width: 680px;
+      padding: 40px 20px;
+    }
+    .brand-title {
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: var(--text-main);
+      margin-bottom: 24px;
+      font-family: serif;
+    }
+    .brand-title span {
+      color: var(--accent-gold);
+    }
+    .hero-desc {
+      font-size: 15px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 40px;
+    }
+    .btn-group {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn-gold {
+      background-color: var(--accent-gold);
+      color: #000;
+      font-weight: 700;
+      padding: 14px 28px;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 13px;
+      letter-spacing: 0.5px;
+      transition: background-color 0.2s ease;
+      border: none;
+      cursor: pointer;
+    }
+    .btn-gold:hover {
+      background-color: var(--accent-gold-hover);
+    }
+    .btn-outline {
+      background-color: transparent;
+      color: var(--text-main);
+      font-weight: 600;
+      padding: 14px 28px;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 13px;
+      letter-spacing: 0.5px;
+      border: 1px solid var(--border-subtle);
+      transition: all 0.2s ease;
+    }
+    .btn-outline:hover {
+      border-color: var(--accent-gold);
+      color: var(--accent-gold);
+    }
+    footer {
+      margin-top: 60px;
+      font-size: 11px;
+      color: var(--text-muted);
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 20px;
+      width: 100%;
+      max-width: 600px;
+    }
   </style>
 </head>
 <body>
-  <div class="header-bar">
-    <div>
-      <h2 style="color: var(--accent-gold); font-size: 16px;">🛡️ GHOST TALK — COMMAND DASHBOARD</h2>
-      <span style="font-size: 10px; color: var(--text-muted);">Sovereign Mesh Telemetry & Control</span>
-    </div>
-    <div id="connectionStatus" class="status-badge">CONNECTING...</div>
-  </div>
-  <div class="grid-layout">
-    <div>
-      <div class="card">
-        <div class="card-title"><span>📈 Real-Time Mesh Telemetry Graph</span><span id="activeCountText">Active: 0</span></div>
-        <canvas id="metricsCanvas"></canvas>
-      </div>
-      <div class="card">
-        <div class="card-title"><span>👥 Active Mesh Peers</span></div>
-        <table>
-          <thead><tr><th>Identity Key</th><th>Tier</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody id="activePeerTableBody"><tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No active peers.</td></tr></tbody>
-        </table>
-      </div>
-      <div class="card">
-        <div class="card-title"><span>📂 Dormant / Historical Registered Peers</span></div>
-        <table>
-          <thead><tr><th>Identity Key</th><th>Tier</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody id="dormantPeerTableBody"><tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No dormant peers.</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-    <div>
-      <div class="card">
-        <div class="card-title"><span>💰 Pricing Configuration</span></div>
-        <label style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Monthly Plan ($)</label>
-        <input type="number" id="monthlyPriceInput" step="0.01">
-        <label style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Yearly Plan ($)</label>
-        <input type="number" id="yearlyPriceInput" step="0.01">
-        <button class="btn" style="width: 100%; background: var(--accent-gold); color: #000;" onclick="updatePricing()">Update Mesh Pricing</button>
-      </div>
-      <div class="card">
-        <div class="card-title"><span>⚠️ Emergency Control</span></div>
-        <button class="btn btn-danger" style="width: 100%; padding: 8px;" onclick="wipeServerRAM()">🔥 Wipe Server RAM & Disconnect All</button>
-      </div>
+  <div class="hero-container">
+    <div style="font-size: 12px; color: var(--accent-gold); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 12px;">✦ Sovereign Communication Protocol</div>
+    <h1 class="brand-title">Absolute Privacy, <span>Without Compromise</span></h1>
+    <p class="hero-desc">
+      A peer-to-peer encrypted sanctuary for private discourse, secure voice links, and direct media streaming. Entirely decentralized, leaving no trace upon the digital landscape.
+    </p>
+    <div class="btn-group">
+      <a href="/app" class="btn-gold">Launch Secure Web App</a>
+      <a href="/download-apk" class="btn-outline">Download Android APK</a>
     </div>
   </div>
-  <script>
-    let ws = null;
-    let historyData = [];
-    const canvas = document.getElementById('metricsCanvas');
-    const ctx = canvas.getContext('2d');
 
-    function initAdminSocket() {
-      const proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-      ws = new WebSocket(proto + window.location.host);
-      ws.onopen = () => {
-        document.getElementById('connectionStatus').innerText = 'AUTHORIZED | SECURED';
-        ws.send(JSON.stringify({ type: 'admin-auth', secret: 'GHOST-ADMIN-PASS-2026' }));
-      };
-      ws.onmessage = (evt) => {
-        const msg = JSON.parse(evt.data);
-        if (msg.type === 'admin-authenticated' && msg.pricing) {
-          document.getElementById('monthlyPriceInput').value = msg.pricing.monthly;
-          document.getElementById('yearlyPriceInput').value = msg.pricing.yearly;
-        }
-        if (msg.type === 'admin-telemetry') updateDashboardUI(msg.metrics);
-      };
-      ws.onclose = () => {
-        document.getElementById('connectionStatus').innerText = 'OFFLINE | RECONNECTING...';
-        setTimeout(initAdminSocket, 2000);
-      };
-    }
-
-    function updateDashboardUI(m) {
-      document.getElementById('activeCountText').innerText = 'Active: ' + m.activePeers.length;
-
-      const activeTbody = document.getElementById('activePeerTableBody');
-      activeTbody.innerHTML = '';
-      if (m.activePeers.length === 0) {
-        activeTbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No active peers.</td></tr>';
-      } else {
-        m.activePeers.forEach(peer => {
-          const isPrem = peer.tier === 'PREMIUM';
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td style="font-weight: bold; color: var(--accent-gold);">${peer.key}</td><td><span class="status-badge" style="color: ${isPrem ? 'var(--accent-gold)' : 'var(--text-muted)'};">${peer.tier}</span></td><td style="color: #00ff88;">ONLINE</td><td><button class="btn" onclick="toggleTier('${peer.key}', '${isPrem ? 'FREE' : 'PREMIUM'}')">${isPrem ? 'Downgrade' : 'Promote'}</button> <button class="btn btn-danger" onclick="kickPeer('${peer.key}')">Kick</button></td>`;
-          activeTbody.appendChild(tr);
-        });
-      }
-
-      const dormantTbody = document.getElementById('dormantPeerTableBody');
-      dormantTbody.innerHTML = '';
-      if (m.dormantPeers.length === 0) {
-        dormantTbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No dormant peers.</td></tr>';
-      } else {
-        m.dormantPeers.forEach(peer => {
-          const isPrem = peer.tier === 'PREMIUM';
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td style="font-weight: bold; color: var(--text-muted);">${peer.key}</td><td><span class="status-badge" style="color: ${isPrem ? 'var(--accent-gold)' : 'var(--text-muted)'};">${peer.tier}</span></td><td style="color: var(--text-muted);">DORMANT</td><td><button class="btn" onclick="toggleTier('${peer.key}', '${isPrem ? 'FREE' : 'PREMIUM'}')">${isPrem ? 'Downgrade' : 'Promote'}</button></td>`;
-          dormantTbody.appendChild(tr);
-        });
-      }
-
-      historyData.push(m.totalConnections);
-      if (historyData.length > 30) historyData.shift();
-      drawChart();
-    }
-
-    function drawChart() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.strokeStyle = '#c5a059';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      const step = canvas.width / 30;
-      historyData.forEach((val, i) => {
-        const y = canvas.height - (val * 20) - 20;
-        if (i === 0) ctx.moveTo(0, Math.max(10, y));
-        else ctx.lineTo(i * step, Math.max(10, y));
-      });
-      ctx.stroke();
-    }
-
-    function toggleTier(targetKey, tier) { ws.send(JSON.stringify({ type: 'admin-set-tier', targetKey, tier })); }
-    function kickPeer(targetKey) { if (confirm('Kick target ' + targetKey + '?')) ws.send(JSON.stringify({ type: 'admin-kick', targetKey })); }
-    function updatePricing() {
-      const monthly = parseFloat(document.getElementById('monthlyPriceInput').value);
-      const yearly = parseFloat(document.getElementById('yearlyPriceInput').value);
-      ws.send(JSON.stringify({ type: 'admin-update-pricing', pricing: { monthly, yearly } }));
-      alert('Pricing updated across mesh!');
-    }
-    function wipeServerRAM() { if (confirm('⚠️ Emergency Wipe Server RAM?')) ws.send(JSON.stringify({ type: 'admin-wipe-ram' })); }
-    initAdminSocket();
-  </script>
+  <footer>
+    <p>&copy; 2026 Ghost Talk. Sovereign Architecture.</p>
+    <div style="margin-top: 8px;">
+      <a href="/terms" style="color: var(--accent-gold); text-decoration: none; margin: 0 10px;">Terms of Service</a>
+      <a href="/privacy" style="color: var(--accent-gold); text-decoration: none; margin: 0 10px;">Privacy Policy</a>
+    </div>
+  </footer>
 </body>
 </html>

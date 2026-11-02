@@ -99,22 +99,6 @@ function savePersistedData() {
 loadPersistedData();
 
 let planPricing = { monthly: 9.99, yearly: 89.99 };
-const NOWPAYMENTS_API_KEY = 'PWK9N5F-HBCME2K-JM7HY1F-CCG8KGQ';
-const NOWPAYMENTS_IPN_KEY = 'etFGh8rCCnOtcK20TfsXbPPrbYXXkEk9';
-
-function grantPremiumWithExpiry(userKey, durationDays = 30) {
-  const upperKey = userKey.toUpperCase();
-  const expiryTimestamp = Date.now() + (durationDays * 24 * 60 * 60 * 1000);
-  clientTiers.set(upperKey, 'PREMIUM');
-  clientExpirations.set(upperKey, expiryTimestamp);
-  savePersistedData();
-
-  const ws = clients.get(upperKey);
-  if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'tier-updated', tier: 'PREMIUM', expiresAt: expiryTimestamp }));
-  }
-  broadcastAdminMetrics();
-}
 
 wss.on('connection', (ws) => {
   let currentKey = null;
@@ -198,20 +182,18 @@ wss.on('connection', (ws) => {
           return;
         }
 
+        // Anti-piracy collision check: ensure handle isn't claimed by another base key or active socket
         if ((customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) || clients.has(desiredKey)) {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ Handle already claimed.' }));
           return;
         }
 
+        // Clear any old custom handle owned by this key
         for (const [handle, ownerKey] of customHandles.entries()) {
           if (ownerKey === currentKey) customHandles.delete(handle);
         }
 
-        clients.delete(currentKey); // Remove old socket mapping
         customHandles.set(desiredKey, currentKey);
-        currentKey = desiredKey; // FIX: Update active session key so routing matches new handle
-        clients.set(currentKey, ws); // Re-map socket to new handle
-
         savePersistedData();
         ws.send(JSON.stringify({ type: 'custom-key-success', customKey: desiredKey }));
         broadcastAdminMetrics();
@@ -233,12 +215,18 @@ wss.on('connection', (ws) => {
         broadcastAdminMetrics();
       } else if (data.targetKey) {
         const targetKeyUpper = data.targetKey.toUpperCase();
+        // Resolve target through custom handles mapping back to base socket key
         const targetAddress = customHandles.get(targetKeyUpper) || targetKeyUpper;
         
         if (clients.has(targetAddress)) {
           const targetWs = clients.get(targetAddress);
           if (targetWs && targetWs.readyState === 1) {
-            data.senderKey = currentKey === 'ADMIN-ROOT' ? 'ADMIN DASHBOARD' : currentKey;
+            // If sender has an active custom handle, send that as senderKey; otherwise base key
+            let senderHandle = currentKey;
+            for (const [handle, ownerKey] of customHandles.entries()) {
+              if (ownerKey === currentKey) { senderHandle = handle; break; }
+            }
+            data.senderKey = currentKey === 'ADMIN-ROOT' ? 'ADMIN DASHBOARD' : senderHandle;
             targetWs.send(JSON.stringify(data));
           }
         }

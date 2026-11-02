@@ -21,21 +21,20 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
       min-height: 100vh;
-      padding: 24px;
-      text-align: center;
+      padding: 32px 16px;
     }
     .hero-container {
-      max-width: 680px;
-      padding: 40px 20px;
+      max-width: 720px;
+      padding: 40px 20px 20px 20px;
+      text-align: center;
     }
     .brand-title {
-      font-size: 36px;
+      font-size: 38px;
       font-weight: 800;
-      letter-spacing: 1px;
+      letter-spacing: 0.5px;
       color: var(--text-main);
-      margin-bottom: 24px;
+      margin-bottom: 20px;
       font-family: serif;
     }
     .brand-title span {
@@ -45,13 +44,14 @@
       font-size: 15px;
       color: var(--text-muted);
       line-height: 1.6;
-      margin-bottom: 40px;
+      margin-bottom: 32px;
     }
     .btn-group {
       display: flex;
       gap: 16px;
       justify-content: center;
       flex-wrap: wrap;
+      margin-bottom: 48px;
     }
     .btn-gold {
       background-color: var(--accent-gold);
@@ -85,18 +85,125 @@
       border-color: var(--accent-gold);
       color: var(--accent-gold);
     }
+
+    /* Interactive Info Tabs Section */
+    .tabs-section {
+      width: 100%;
+      max-width: 640px;
+      background: var(--card-bg);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 24px;
+      margin-bottom: 40px;
+    }
+    .tab-headers {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .tab-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .tab-btn.active {
+      color: var(--accent-gold);
+      border-color: var(--accent-gold);
+      background: #1a2220;
+    }
+    .tab-content {
+      display: none;
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      text-align: left;
+      padding: 4px 8px;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .tab-content strong {
+      color: var(--text-main);
+    }
+
+    /* Footer & Legal Modals */
     footer {
-      margin-top: 60px;
+      margin-top: auto;
       font-size: 11px;
       color: var(--text-muted);
       border-top: 1px solid var(--border-subtle);
       padding-top: 20px;
       width: 100%;
       max-width: 600px;
+      text-align: center;
     }
+    .legal-link {
+      color: var(--accent-gold);
+      text-decoration: none;
+      margin: 0 10px;
+      cursor: pointer;
+    }
+    .legal-link:hover { text-decoration: underline; }
+
+    /* Modal Overlay Styles */
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(10, 14, 13, 0.85);
+      z-index: 9999;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+    }
+    .modal-box {
+      background: var(--card-bg);
+      border: 1px solid var(--accent-gold);
+      border-radius: 10px;
+      max-width: 600px;
+      width: 100%;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      padding: 24px;
+      text-align: left;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.8);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+    }
+    .modal-header h3 { color: var(--accent-gold); font-size: 16px; }
+    .close-btn { background: transparent; border: none; color: var(--text-main); font-size: 18px; cursor: pointer; }
+    .modal-body {
+      overflow-y: auto;
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding-right: 4px;
+    }
+    .modal-body h4 { color: var(--text-main); font-size: 13px; margin-top: 4px; }
   </style>
 </head>
 <body>
+
   <div class="hero-container">
     <div style="font-size: 12px; color: var(--accent-gold); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 12px;">✦ Sovereign Communication Protocol</div>
     <h1 class="brand-title">Absolute Privacy, <span>Without Compromise</span></h1>
@@ -109,12 +216,88 @@
     </div>
   </div>
 
+  <!-- Interactive Feature Tabs -->
+  <div class="tabs-section">
+    <div class="tab-headers">
+      <button class="tab-btn active" onclick="switchTab(event, 'tab-ram')">RAM Architecture</button>
+      <button class="tab-btn" onclick="switchTab(event, 'tab-p2p')">Direct WebRTC P2P</button>
+      <button class="tab-btn" onclick="switchTab(event, 'tab-sovereign')">Ephemeral Security</button>
+    </div>
+    <div id="tab-ram" class="tab-content active">
+      <strong>Zero-Trace Memory State:</strong> Ghost Talk operates entirely in transient server RAM. No communication transcripts, user credentials, or shared files are ever written to persistent disk storage or cloud databases. Once a session ends, all operational states vanish.
+    </div>
+    <div id="tab-p2p" class="tab-content">
+      <strong>Decrypted Client-to-Client Transport:</strong> Voice streams, video feeds, and direct files travel straight across peer-to-peer secure data channels. The infrastructure acts solely as a lightweight signaling relay, leaving zero telemetry behind.
+    </div>
+    <div id="tab-sovereign" class="tab-content">
+      <strong>Anonymous Identity & Handles:</strong> Built for high-discretion environments. Generate randomized cryptographic identity keys instantly or claim custom handles protected under strict server-side anti-piracy validations.
+    </div>
+  </div>
+
   <footer>
     <p>&copy; 2026 Ghost Talk. Sovereign Architecture.</p>
     <div style="margin-top: 8px;">
-      <a href="/terms" style="color: var(--accent-gold); text-decoration: none; margin: 0 10px;">Terms of Service</a>
-      <a href="/privacy" style="color: var(--accent-gold); text-decoration: none; margin: 0 10px;">Privacy Policy</a>
+      <a class="legal-link" onclick="openModal('terms-modal')">Terms of Service</a>
+      <a class="legal-link" onclick="openModal('privacy-modal')">Privacy Policy</a>
     </div>
   </footer>
+
+  <!-- Terms of Service Modal -->
+  <div id="terms-modal" class="modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Terms of Service</h3>
+        <button class="close-btn" onclick="closeModal('terms-modal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <h4>1. Acceptance of Protocol</h4>
+        <p>By accessing or utilizing Ghost Talk, you agree to operate within the bounds of this sovereign, decentralized communication framework. This platform is provided strictly for private, lawful discourse.</p>
+        <h4>2. Disclaimer of Warranty</h4>
+        <p>Ghost Talk is delivered on an "AS IS" and "AS AVAILABLE" basis without warranties of any kind, whether express or implied. The developers disclaim all liability for network latency, connectivity disruptions, or client-side hardware conditions.</p>
+        <h4>3. Ephemeral Architecture</h4>
+        <p>Voice, video, and text payloads are transmitted directly between peers via WebRTC encryption or transient WebSocket channels. We maintain no persistent databases, logs, or archives of user conversations.</p>
+        <h4>4. Prohibited Exploitation</h4>
+        <p>Users agree not to leverage this software for automated infrastructure degradation, malicious cyber attacks, or violation of local governing statutes.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Privacy Policy Modal -->
+  <div id="privacy-modal" class="modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Privacy Policy</h3>
+        <button class="close-btn" onclick="closeModal('privacy-modal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <h4>1. Zero-Collection Mandate</h4>
+        <p>Ghost Talk is engineered around a strict zero-trace operational mandate. We do not collect personal identifiers, track browser telemetry, or retain communication transcripts.</p>
+        <h4>2. Local Client Storage</h4>
+        <p>Your ephemeral identity keys and RAM contact book reside solely in your browser's local storage or volatile memory. You retain absolute control to wipe your state at any moment using the emergency wipe utility.</p>
+        <h4>3. Secure Payments</h4>
+        <p>Optional premium feature tier activations are processed via encrypted third-party sovereign billing gateways. No financial credentials or credit card metadata are processed or stored on our servers.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function switchTab(evt, tabId) {
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(tabId).classList.add('active');
+      evt.currentTarget.classList.add('active');
+    }
+    function openModal(modalId) {
+      document.getElementById(modalId).style.display = 'flex';
+    }
+    function closeModal(modalId) {
+      document.getElementById(modalId).style.display = 'none';
+    }
+    window.onclick = function(event) {
+      if (event.target.classList.contains('modal')) {
+        event.target.style.display = 'none';
+      }
+    }
+  </script>
 </body>
 </html>

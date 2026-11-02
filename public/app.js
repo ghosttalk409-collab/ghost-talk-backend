@@ -116,21 +116,6 @@ document.addEventListener('DOMContentLoaded', () => {
     chatBox.scrollTop = chatBox.scrollHeight;
   }
 
-  function logFileReceived(senderKey, fileName, fileData, fileType) {
-    if (!chatBox) return;
-    const div = document.createElement('div');
-    div.style.margin = '6px 0';
-    const shortKey = senderKey ? senderKey.substring(0, 8) : 'Peer';
-    const safeName = escapeHTML(fileName);
-    if (fileType && fileType.startsWith('image/')) {
-      div.innerHTML = `<strong>${shortKey} [Image]:</strong> ${safeName}<br><img src="${fileData}" style="max-width: 150px; border-radius: 4px; margin-top: 4px;">`;
-    } else {
-      div.innerHTML = `<strong>${shortKey} [File]:</strong> <a href="${fileData}" download="${safeName}" style="color: var(--accent-gold); text-decoration: underline;">📁 Download ${safeName}</a>`;
-    }
-    chatBox.appendChild(div);
-    chatBox.scrollTop = chatBox.scrollHeight;
-  }
-
   function ensureContact(key, defaultName = 'Peer') {
     if (!key) return;
     const upperKey = key.toUpperCase();
@@ -161,9 +146,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function initWebSocket() {
-    // Explicit production fallback so APK connects seamlessly without local network drops
-    const host = window.location.host.includes('localhost') || window.location.host === '' ? 'ghost-talk-backend.onrender.com' : window.location.host;
-    const socketUrl = `wss://${host}`;
+    // Bulletproof production WebSocket URL resolver for both Web and APK
+    const hostname = window.location.hostname;
+    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '';
+    const socketHost = isLocal ? '127.0.0.1:8158' : 'ghost-talk-backend.onrender.com';
+    const socketUrl = `wss://${socketHost}`;
 
     socket = new WebSocket(socketUrl);
 
@@ -282,12 +269,6 @@ document.addEventListener('DOMContentLoaded', () => {
         renderContacts();
         logChat(`${msg.senderKey.substring(0, 8)}: ${escapeHTML(msg.text)}`);
         break;
-      case 'file-transfer':
-        ensureContact(msg.senderKey, 'Peer');
-        activeCallTarget = msg.senderKey;
-        renderContacts();
-        logFileReceived(msg.senderKey, msg.fileName, msg.fileData, msg.fileType);
-        break;
       case 'decline':
         alert('Call rejected.');
         endCall(false);
@@ -342,7 +323,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function setupWebRTC(wantVideo) {
     if (peerConnection) peerConnection.close();
-
     peerConnection = new RTCPeerConnection(rtcConfig);
 
     peerConnection.onicecandidate = (e) => {
@@ -412,26 +392,6 @@ document.addEventListener('DOMContentLoaded', () => {
   btnCallVideo.onclick = () => startCall(true);
   btnEndSession.onclick = () => endCall(true);
 
-  if (btnToggleMic) {
-    btnToggleMic.onclick = () => {
-      if (localStream && localStream.getAudioTracks().length > 0) {
-        micMuted = !micMuted;
-        localStream.getAudioTracks()[0].enabled = !micMuted;
-        btnToggleMic.innerText = micMuted ? '🎙️ Mic Off' : '🎙️ Mic On';
-      }
-    };
-  }
-
-  if (btnToggleCam) {
-    btnToggleCam.onclick = () => {
-      if (localStream && localStream.getVideoTracks().length > 0) {
-        camOff = !camOff;
-        localStream.getVideoTracks()[0].enabled = !camOff;
-        btnToggleCam.innerText = camOff ? '📹 Cam Off' : '📹 Cam On';
-      }
-    };
-  }
-
   btnChat.onclick = () => {
     if (!activeCallTarget || !isValidContact(activeCallTarget)) { alert('Select a contact.'); return; }
     safeSend({ type: 'text-notify', targetKey: activeCallTarget });
@@ -448,34 +408,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   chatInput.onkeypress = (e) => { if (e.key === 'Enter') btnSend.click(); };
 
-  if (btnAttach && fileInput) {
-    btnAttach.onclick = () => {
-      if (!isPremiumUser) { alert('Premium Feature required.'); return; }
-      if (!activeCallTarget) { alert('Select contact first.'); return; }
-      fileInput.click();
-    };
-
-    fileInput.onchange = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      if (file.size > 5 * 1024 * 1024) {
-        alert('⚠️ File size exceeds 5MB RAM ceiling.');
-        fileInput.value = '';
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        safeSend({
-          type: 'file-transfer', targetKey: activeCallTarget,
-          fileName: file.name, fileType: file.type, fileData: evt.target.result
-        });
-        logChat(`Me [File]: ${escapeHTML(file.name)}`);
-        fileInput.value = '';
-      };
-      reader.readAsDataURL(file);
-    };
-  }
-
   btnAddContact.onclick = () => {
     const name = contactNameInput.value.trim();
     let key = contactKeyInput.value.trim().toUpperCase();
@@ -487,6 +419,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderContacts();
   };
 
+  // Render contacts with proper 3-dot dropdown menu hiding edit/delete inside
   function renderContacts() {
     contactsListContainer.innerHTML = '';
     if (ramContacts.length === 0) {
@@ -606,120 +539,6 @@ document.addEventListener('DOMContentLoaded', () => {
       safeSend({ type: 'set-custom-key', customKey: desiredKey });
     };
   }
-
-  if (btnShowQr) {
-    btnShowQr.onclick = () => {
-      if (!myIdentity) return;
-      if (qrModalTitle) qrModalTitle.innerText = 'My Identity QR';
-      if (qrDisplayContainer) qrDisplayContainer.style.display = 'inline-block';
-      if (qrScannerContainer) qrScannerContainer.style.display = 'none';
-      if (qrcodeDiv) {
-        qrcodeDiv.innerHTML = '';
-        if (window.QRCode) {
-          new QRCode(qrcodeDiv, { text: myIdentity.toUpperCase(), width: 180, height: 180, colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
-        }
-      }
-      if (qrModal) qrModal.style.display = 'flex';
-    };
-  }
-
-  if (btnScanQr) {
-    btnScanQr.onclick = async () => {
-      if (qrModalTitle) qrModalTitle.innerText = 'Scan Contact QR';
-      if (qrDisplayContainer) qrDisplayContainer.style.display = 'none';
-      if (qrScannerContainer) qrScannerContainer.style.display = 'block';
-      if (qrModal) qrModal.style.display = 'flex';
-
-      try {
-        qrCameraStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } }
-        });
-        if (qrVideo) {
-          qrVideo.srcObject = qrCameraStream;
-          qrVideo.setAttribute('playsinline', true);
-          await qrVideo.play();
-        }
-        requestAnimationFrame(scanQrFrame);
-      } catch (err) {
-        alert('❌ Camera unavailable or permissions denied.');
-        closeQrModal();
-      }
-    };
-  }
-
-  function scanQrFrame() {
-    if (!qrCameraStream || !qrVideo || qrVideo.readyState !== qrVideo.HAVE_ENOUGH_DATA) {
-      qrScanAnimation = requestAnimationFrame(scanQrFrame);
-      return;
-    }
-
-    if (!qrCanvas) return;
-    const ctx = qrCanvas.getContext('2d');
-    qrCanvas.width = qrVideo.videoWidth;
-    qrCanvas.height = qrVideo.videoHeight;
-    ctx.drawImage(qrVideo, 0, 0, qrCanvas.width, qrCanvas.height);
-
-    const imageData = ctx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
-    if (window.jsQR) {
-      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-      if (code && code.data) {
-        let scannedKey = code.data.trim().toUpperCase();
-        if (!scannedKey.startsWith('GHOST-')) scannedKey = 'GHOST-' + scannedKey;
-        if (contactKeyInput) contactKeyInput.value = scannedKey;
-        closeQrModal();
-        alert(`✅ Scanned Key: ${scannedKey}`);
-        return;
-      }
-    }
-    qrScanAnimation = requestAnimationFrame(scanQrFrame);
-  }
-
-  if (btnUploadQrImg && qrFileInput) {
-    btnUploadQrImg.onclick = () => qrFileInput.click();
-    qrFileInput.onchange = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          ctx.drawImage(img, 0, 0);
-          const imageData = ctx.getImageData(0, 0, img.width, img.height);
-          if (window.jsQR) {
-            const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-            if (code && code.data) {
-              let scannedKey = code.data.trim().toUpperCase();
-              if (!scannedKey.startsWith('GHOST-')) scannedKey = 'GHOST-' + scannedKey;
-              if (contactKeyInput) contactKeyInput.value = scannedKey;
-              closeQrModal();
-              alert(`✅ Scanned Key: ${scannedKey}`);
-            } else {
-              alert('❌ No valid QR code detected in image.');
-            }
-          }
-        };
-        img.src = event.target.result;
-      };
-      reader.readAsDataURL(file);
-      qrFileInput.value = '';
-    };
-  }
-
-  function stopQrCamera() {
-    if (qrScanAnimation) { cancelAnimationFrame(qrScanAnimation); qrScanAnimation = null; }
-    if (qrCameraStream) { qrCameraStream.getTracks().forEach(t => t.stop()); qrCameraStream = null; }
-  }
-
-  function closeQrModal() {
-    stopQrCamera();
-    if (qrModal) qrModal.style.display = 'none';
-  }
-
-  if (btnCloseQr) btnCloseQr.onclick = closeQrModal;
 
   btnWipe.onclick = () => {
     endCall(true);

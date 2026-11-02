@@ -93,16 +93,12 @@ body {
   letter-spacing: 0.5px;
 }
 
-/* Unified Inputs & Buttons */
+/* Inputs & Buttons */
 .row {
   display: flex;
   gap: 6px;
   align-items: center;
   margin-bottom: 6px;
-}
-
-.row:last-child {
-  margin-bottom: 0;
 }
 
 input[type="text"] {
@@ -140,19 +136,18 @@ input[type="text"]:focus {
   color: #000;
 }
 
-.btn-secondary {
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border-subtle);
+.btn-danger {
+  background: rgba(217, 87, 100, 0.1);
+  color: var(--accent-red);
+  border: 1px solid var(--accent-red);
 }
 
-.btn-secondary:hover {
-  color: var(--text-main);
-  border-color: var(--text-main);
-  background: transparent;
+.btn-danger:hover {
+  background: var(--accent-red);
+  color: #000;
 }
 
-/* Contacts List & Dropdown Menu */
+/* Contacts List & Hidden 3-Dot Popup Menu */
 .contacts-list {
   max-height: 120px;
   overflow-y: auto;
@@ -165,7 +160,7 @@ input[type="text"]:focus {
 .contact-card {
   background: #0b0e0d;
   border: 1px solid var(--border-subtle);
-  padding: 6px 8px;
+  padding: 8px 10px;
   border-radius: 4px;
   cursor: pointer;
   display: flex;
@@ -187,26 +182,28 @@ input[type="text"]:focus {
   background: transparent;
   border: none;
   color: var(--text-muted);
-  font-size: 14px;
-  padding: 2px 6px;
+  font-size: 16px;
+  padding: 2px 8px;
   cursor: pointer;
+  font-weight: bold;
 }
 
 .dot-btn:hover {
-  color: var(--text-main);
+  color: var(--accent-gold);
 }
 
 .dropdown-menu {
   display: none;
   position: absolute;
   right: 0;
-  top: 20px;
+  top: 28px;
   background: #141817;
   border: 1px solid var(--accent-gold);
-  border-radius: 4px;
-  z-index: 100;
-  min-width: 90px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+  border-radius: 6px;
+  z-index: 999;
+  min-width: 110px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.7);
+  overflow: hidden;
 }
 
 .dropdown-menu.show {
@@ -218,10 +215,15 @@ input[type="text"]:focus {
   background: transparent;
   border: none;
   color: var(--text-main);
-  padding: 6px 10px;
-  font-size: 10px;
+  padding: 8px 12px;
+  font-size: 11px;
   text-align: left;
   cursor: pointer;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.dropdown-item:last-child {
+  border-bottom: none;
 }
 
 .dropdown-item:hover {

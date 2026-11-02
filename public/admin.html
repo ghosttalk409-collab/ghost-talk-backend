@@ -13,6 +13,7 @@
     .grid-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
     .card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
     .card-title { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 12px; display: flex; justify-content: space-between; letter-spacing: 0.5px; }
+    #metricsCanvas { width: 100%; height: 160px; background: #0b0e0d; border-radius: 6px; border: 1px solid var(--border-color); }
     table { width: 100%; border-collapse: collapse; text-align: left; }
     th, td { padding: 8px; border-bottom: 1px solid var(--border-color); font-size: 12px; }
     th { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -35,14 +36,18 @@
   <div class="grid-layout">
     <div>
       <div class="card">
-        <div class="card-title"><span>👥 Active Mesh Peers (<span id="activeCount">0</span>)</span></div>
+        <div class="card-title"><span>📈 Real-Time Mesh Telemetry Graph</span><span id="activeCountText">Active: 0</span></div>
+        <canvas id="metricsCanvas"></canvas>
+      </div>
+      <div class="card">
+        <div class="card-title"><span>👥 Active Mesh Peers</span></div>
         <table>
           <thead><tr><th>Identity Key</th><th>Tier</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="activePeerTableBody"><tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No active peers.</td></tr></tbody>
         </table>
       </div>
       <div class="card">
-        <div class="card-title"><span>📂 Dormant / Historical Registered Peers (<span id="dormantCount">0</span>)</span></div>
+        <div class="card-title"><span>📂 Dormant / Historical Registered Peers</span></div>
         <table>
           <thead><tr><th>Identity Key</th><th>Tier</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="dormantPeerTableBody"><tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No dormant peers.</td></tr></tbody>
@@ -66,6 +71,10 @@
   </div>
   <script>
     let ws = null;
+    let historyData = [];
+    const canvas = document.getElementById('metricsCanvas');
+    const ctx = canvas.getContext('2d');
+
     function initAdminSocket() {
       const proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
       ws = new WebSocket(proto + window.location.host);
@@ -86,9 +95,9 @@
         setTimeout(initAdminSocket, 2000);
       };
     }
+
     function updateDashboardUI(m) {
-      document.getElementById('activeCount').innerText = m.activePeers.length;
-      document.getElementById('dormantCount').innerText = m.dormantPeers.length;
+      document.getElementById('activeCountText').innerText = 'Active: ' + m.activePeers.length;
 
       const activeTbody = document.getElementById('activePeerTableBody');
       activeTbody.innerHTML = '';
@@ -115,7 +124,26 @@
           dormantTbody.appendChild(tr);
         });
       }
+
+      historyData.push(m.totalConnections);
+      if (historyData.length > 30) historyData.shift();
+      drawChart();
     }
+
+    function drawChart() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = '#c5a059';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const step = canvas.width / 30;
+      historyData.forEach((val, i) => {
+        const y = canvas.height - (val * 20) - 20;
+        if (i === 0) ctx.moveTo(0, Math.max(10, y));
+        else ctx.lineTo(i * step, Math.max(10, y));
+      });
+      ctx.stroke();
+    }
+
     function toggleTier(targetKey, tier) { ws.send(JSON.stringify({ type: 'admin-set-tier', targetKey, tier })); }
     function kickPeer(targetKey) { if (confirm('Kick target ' + targetKey + '?')) ws.send(JSON.stringify({ type: 'admin-kick', targetKey })); }
     function updatePricing() {

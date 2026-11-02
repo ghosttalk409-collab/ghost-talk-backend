@@ -15,7 +15,6 @@ app.get('/app', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Secure USB Admin Panel Route
 app.get('/admin-panel', (req, res) => {
   if (req.query.key === 'GHOST-USB-KEY-999') {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
@@ -47,10 +46,10 @@ app.use(express.static('public'));
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, maxPayload: 10 * 1024 * 1024 });
 
-const clients = new Map();         // Key -> WebSocket
-const clientTiers = new Map();     // Key -> 'FREE' | 'PREMIUM'
-const clientExpirations = new Map(); // Key -> Timestamp
-const customHandles = new Map();   // Handle -> Key
+const clients = new Map();
+const clientTiers = new Map();
+const clientExpirations = new Map();
+const customHandles = new Map();
 let adminWs = null;
 
 const TIERS_FILE = path.join(__dirname, 'tiers.json');
@@ -122,7 +121,6 @@ function grantPremiumWithExpiry(userKey, durationDays = 30) {
   broadcastAdminMetrics();
 }
 
-// Background Tier Cleaner
 setInterval(() => {
   const now = Date.now();
   let updated = false;
@@ -259,7 +257,6 @@ wss.on('connection', (ws) => {
         currentKey = data.key.toUpperCase();
         clients.set(currentKey, ws);
         
-        // Authoritative server-side tier lookup (prevents client tampering)
         const currentTier = clientTiers.get(currentKey) || 'FREE';
         const expiry = clientExpirations.get(currentKey) || null;
 
@@ -296,7 +293,6 @@ function broadcastAdminMetrics() {
   const activePeers = [];
   const dormantPeers = [];
 
-  // Compile active connections
   clients.forEach((ws, key) => {
     if (key !== 'ADMIN-ROOT') {
       const tier = clientTiers.get(key) || 'FREE';
@@ -305,7 +301,6 @@ function broadcastAdminMetrics() {
     }
   });
 
-  // Compile dormant registered peers from memory/storage
   clientTiers.forEach((tier, key) => {
     if (!clients.has(key)) {
       const expiresAt = clientExpirations.get(key) || null;
@@ -342,7 +337,7 @@ app.post('/api/create-payment', async (req, res) => {
       })
     });
     const data = await response.json();
-    if (data.invoice_url) res.json({ success: true, invoiceUrl: data.invoice_url });
+    if (data.invoiceUrl) res.json({ success: true, invoiceUrl: data.invoiceUrl });
     else res.status(400).json({ success: false });
   } catch (err) { res.status(500).json({ success: false }); }
 });

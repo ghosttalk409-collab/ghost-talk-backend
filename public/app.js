@@ -1,4 +1,3 @@
-import { FrameCrypto } from './e2ee.js';
 import { SecurityGuard } from './security.js';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -71,11 +70,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let ramContacts = [];
   let reconnectAttempts = 0;
   
-  let callState = 'IDLE'; // 'IDLE' | 'CALLING' | 'CONNECTED'
+  let callState = 'IDLE';
   let pendingSocketQueue = [];
 
   const security = new SecurityGuard();
-  const frameCrypto = new FrameCrypto();
 
   const rtcConfig = {
     iceServers: [
@@ -97,21 +95,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (premium) {
       localStorage.setItem('ghost_tier', 'PREMIUM');
       if (expiresAt) localStorage.setItem('ghost_tier_expiry', expiresAt);
-      if (tierBadge) {
-        tierBadge.innerText = 'PREMIUM TIER';
-      }
+      if (tierBadge) tierBadge.innerText = 'PREMIUM TIER';
       if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'block';
     } else {
       localStorage.removeItem('ghost_tier');
       localStorage.removeItem('ghost_tier_expiry');
-      if (tierBadge) {
-        tierBadge.innerText = 'FREE TIER';
-      }
+      if (tierBadge) tierBadge.innerText = 'FREE TIER';
       if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'none';
     }
   }
 
-  // Instant server cache read for fast UI setup
   const cachedTier = localStorage.getItem('ghost_tier');
   if (cachedTier === 'PREMIUM') applyUIPremiumState(true);
 
@@ -167,10 +160,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Instant connection initializer
   function initWebSocket() {
-    const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '8158';
-    const socketUrl = isLocalBrowser ? 'ws://127.0.0.1:8158' : `wss://${window.location.host}`;
+    // Explicit production fallback so APK connects seamlessly without local network drops
+    const host = window.location.host.includes('localhost') || window.location.host === '' ? 'ghost-talk-backend.onrender.com' : window.location.host;
+    const socketUrl = `wss://${host}`;
 
     socket = new WebSocket(socketUrl);
 
@@ -505,14 +498,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const isSelected = activeCallTarget === c.key;
       const card = document.createElement('div');
       card.className = `contact-card ${isSelected ? 'selected' : ''}`;
-      card.style.display = 'flex';
-      card.style.alignItems = 'center';
-      card.style.justifyContent = 'space-between';
-      card.style.padding = '8px';
-      card.style.marginBottom = '6px';
-      card.style.background = isSelected ? '#1a2220' : '#141817';
-      card.style.borderRadius = '4px';
-      card.style.border = isSelected ? '1px solid var(--accent-gold)' : '1px solid #232d2a';
       
       const infoDiv = document.createElement('div');
       infoDiv.style.flexGrow = '1';

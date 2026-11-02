@@ -28,7 +28,6 @@ body {
   min-height: 100vh;
 }
 
-/* Header & Status Bar */
 .header-row {
   display: flex;
   justify-content: space-between;
@@ -74,7 +73,6 @@ body {
   border-color: rgba(217, 87, 100, 0.3);
 }
 
-/* Sleek Sections */
 .section {
   background: var(--card-bg);
   border: 1px solid var(--border-subtle);
@@ -93,7 +91,6 @@ body {
   letter-spacing: 0.5px;
 }
 
-/* Inputs & Buttons */
 .row {
   display: flex;
   gap: 6px;
@@ -147,7 +144,6 @@ input[type="text"]:focus {
   color: #000;
 }
 
-/* Contacts List & Hidden 3-Dot Popup Menu */
 .contacts-list {
   max-height: 120px;
   overflow-y: auto;
@@ -231,7 +227,6 @@ input[type="text"]:focus {
   color: var(--accent-gold);
 }
 
-/* Chat Box */
 .chat-box {
   background: #0b0e0d;
   border: 1px solid var(--border-subtle);
@@ -247,7 +242,6 @@ input[type="text"]:focus {
   gap: 4px;
 }
 
-/* Video & Call Elements */
 #video-container {
   display: none;
   position: relative;
@@ -287,7 +281,6 @@ input[type="text"]:focus {
   flex: 1;
 }
 
-/* Modals */
 .modal {
   display: none;
   position: fixed;

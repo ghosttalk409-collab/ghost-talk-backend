@@ -30,27 +30,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const chatBox = document.getElementById('chat-box');
   const chatInput = document.getElementById('chat-input');
   const btnSend = document.getElementById('btn-send');
-  const btnAttach = document.getElementById('btn-attach');
-  const fileInput = document.getElementById('file-input');
   const btnWipe = document.getElementById('btn-wipe');
 
   const callModal = document.getElementById('call-modal');
   const callerIdText = document.getElementById('caller-id-text');
   const btnAccept = document.getElementById('btn-accept');
   const btnDecline = document.getElementById('btn-decline');
-
-  const btnShowQr = document.getElementById('btn-show-qr');
-  const btnScanQr = document.getElementById('btn-scan-qr');
-  const qrModal = document.getElementById('qr-modal');
-  const qrModalTitle = document.getElementById('qr-modal-title');
-  const qrDisplayContainer = document.getElementById('qr-display-container');
-  const qrScannerContainer = document.getElementById('qr-scanner-container');
-  const btnCloseQr = document.getElementById('btn-close-qr');
-  const qrcodeDiv = document.getElementById('qrcode');
-  const qrVideo = document.getElementById('qr-video');
-  const qrCanvas = document.getElementById('qr-canvas');
-  const btnUploadQrImg = document.getElementById('btn-upload-qr-img');
-  const qrFileInput = document.getElementById('qr-file-input');
 
   const paymentModal = document.getElementById('payment-modal');
   const btnStartCheckout = document.getElementById('btn-start-checkout');
@@ -65,8 +50,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let localStream = null;
   let micMuted = false;
   let camOff = false;
-  let qrCameraStream = null;
-  let qrScanAnimation = null;
   let ramContacts = [];
   let reconnectAttempts = 0;
   
@@ -146,7 +129,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function initWebSocket() {
-    // Bulletproof production WebSocket URL resolver for both Web and APK
     const hostname = window.location.hostname;
     const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '';
     const socketHost = isLocal ? '127.0.0.1:8158' : 'ghost-talk-backend.onrender.com';
@@ -419,7 +401,6 @@ document.addEventListener('DOMContentLoaded', () => {
     renderContacts();
   };
 
-  // Render contacts with proper 3-dot dropdown menu hiding edit/delete inside
   function renderContacts() {
     contactsListContainer.innerHTML = '';
     if (ramContacts.length === 0) {

@@ -77,13 +77,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const security = new SecurityGuard();
   const frameCrypto = new FrameCrypto();
 
-  // Robust STUN configuration for reliable P2P traversal across networks
   const rtcConfig = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' }
+      { urls: 'stun:stun1.l.google.com:19302' }
     ]
   };
 
@@ -228,10 +225,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '8158';
     const socketUrl = isLocalBrowser ? 'ws://127.0.0.1:8158' : 'wss://ghost-talk-backend.onrender.com';
 
-    if (socket) {
-      try { socket.close(); } catch (e) {}
-    }
-
     socket = new WebSocket(socketUrl);
 
     socket.onopen = () => {
@@ -280,7 +273,7 @@ document.addEventListener('DOMContentLoaded', () => {
         applyUIPremiumState(msg.tier === 'PREMIUM', msg.expiresAt);
         logChat(`System: Tier updated to ${msg.tier}.`);
         break;
-      case 'custom-key-success':
+            case 'custom-key-success':
         myIdentity = msg.customKey.startsWith('GHOST-') ? msg.customKey : `GHOST-${msg.customKey}`;
         localStorage.setItem('ghost_identity', myIdentity);
         if (myIdentityInput) myIdentityInput.value = myIdentity;
@@ -288,10 +281,8 @@ document.addEventListener('DOMContentLoaded', () => {
         alert(`✅ Custom Handle Set: ${myIdentity}`);
         if (customKeyInput) customKeyInput.value = '';
 
+        // Force a clean, fresh WebSocket re-connection under the new custom identity for APK stability
         initWebSocket();
-        break;
-      case 'custom-key-error':
-        alert(`❌ ${msg.message}`);
         break;
       case 'text-notify':
         ensureContact(msg.senderKey, 'Peer');
@@ -421,7 +412,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     };
 
-    // --- ROBUST AUDIO/VIDEO TRACK HANDLING ---
     peerConnection.ontrack = (e) => {
       if (e.streams && e.streams[0]) {
         if (e.track.kind === 'video' && remoteVideo) {
@@ -432,11 +422,7 @@ document.addEventListener('DOMContentLoaded', () => {
           remoteAudio.srcObject = e.streams[0];
           remoteAudio.volume = 1.0;
           remoteAudio.muted = false;
-          remoteAudio.setAttribute('autoplay', 'true');
-          remoteAudio.setAttribute('playsinline', 'true');
-          remoteAudio.play().catch((err) => {
-            console.log('Audio autoplay prevented, user interaction required:', err);
-          });
+          remoteAudio.play().catch(() => {});
         }
       }
     };
@@ -551,16 +537,12 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-  // --- AUTOMATICALLY SELECT NEWLY ADDED CONTACTS ---
   btnAddContact.onclick = () => {
     const name = contactNameInput.value.trim();
     let key = contactKeyInput.value.trim().toUpperCase();
     if (!name || !key) { alert('Enter Name and Key.'); return; }
     if (!key.startsWith('GHOST-')) key = 'GHOST-' + key;
-    
     ramContacts.push({ name, key });
-    activeCallTarget = key; // Auto-select so user never gets stuck on "Select a valid contact first"
-    
     contactNameInput.value = '';
     contactKeyInput.value = '';
     renderContacts();

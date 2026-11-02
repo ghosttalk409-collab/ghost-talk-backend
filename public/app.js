@@ -1,4 +1,3 @@
-import { FrameCrypto } from './e2ee.js';
 import { SecurityGuard } from './security.js';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -31,27 +30,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const chatBox = document.getElementById('chat-box');
   const chatInput = document.getElementById('chat-input');
   const btnSend = document.getElementById('btn-send');
-  const btnAttach = document.getElementById('btn-attach');
-  const fileInput = document.getElementById('file-input');
   const btnWipe = document.getElementById('btn-wipe');
 
   const callModal = document.getElementById('call-modal');
   const callerIdText = document.getElementById('caller-id-text');
   const btnAccept = document.getElementById('btn-accept');
   const btnDecline = document.getElementById('btn-decline');
-
-  const btnShowQr = document.getElementById('btn-show-qr');
-  const btnScanQr = document.getElementById('btn-scan-qr');
-  const qrModal = document.getElementById('qr-modal');
-  const qrModalTitle = document.getElementById('qr-modal-title');
-  const qrDisplayContainer = document.getElementById('qr-display-container');
-  const qrScannerContainer = document.getElementById('qr-scanner-container');
-  const btnCloseQr = document.getElementById('btn-close-qr');
-  const qrcodeDiv = document.getElementById('qrcode');
-  const qrVideo = document.getElementById('qr-video');
-  const qrCanvas = document.getElementById('qr-canvas');
-  const btnUploadQrImg = document.getElementById('btn-upload-qr-img');
-  const qrFileInput = document.getElementById('qr-file-input');
 
   const paymentModal = document.getElementById('payment-modal');
   const btnStartCheckout = document.getElementById('btn-start-checkout');
@@ -66,18 +50,13 @@ document.addEventListener('DOMContentLoaded', () => {
   let localStream = null;
   let micMuted = false;
   let camOff = false;
-  let ringtoneInterval = null;
-  let qrCameraStream = null;
-  let qrScanAnimation = null;
   let ramContacts = [];
   let reconnectAttempts = 0;
   
-  // STATE MACHINE & BUFFER QUEUE
-  let callState = 'IDLE'; // 'IDLE' | 'CALLING' | 'CONNECTED'
+  let callState = 'IDLE';
   let pendingSocketQueue = [];
 
   const security = new SecurityGuard();
-  const frameCrypto = new FrameCrypto();
 
   const rtcConfig = {
     iceServers: [
@@ -85,37 +64,6 @@ document.addEventListener('DOMContentLoaded', () => {
       { urls: 'stun:stun1.l.google.com:19302' }
     ]
   };
-
-  // --- THEME & MENU STYLES ---
-  const styleInject = document.createElement('style');
-  styleInject.innerHTML = `
-    :root {
-      --bg-deep: #0e1110;
-      --bg-card: #141817;
-      --accent-gold: #c5a059;
-      --accent-gold-hover: #d4af37;
-      --text-main: #e2e8f0;
-      --text-muted: #8892b0;
-      --border-subtle: #232d2a;
-    }
-    body { background-color: var(--bg-deep) !important; color: var(--text-main) !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important; }
-    .contact-card { transition: all 0.2s ease; position: relative; }
-    .contact-card.selected { border-color: var(--accent-gold) !important; background: #1a2220 !important; box-shadow: inset 0 0 0 1px var(--accent-gold); }
-    button, .btn { background: #1a2220 !important; color: var(--accent-gold) !important; border: 1px solid var(--accent-gold) !important; border-radius: 4px !important; transition: all 0.3s ease; }
-    button:hover { background: var(--accent-gold) !important; color: #000 !important; }
-    #tier-badge { background: #1a2220 !important; color: var(--accent-gold) !important; border: 1px solid var(--accent-gold) !important; font-weight: 600; letter-spacing: 1px; }
-    input, select, textarea { background: #0b0e0d !important; color: var(--text-main) !important; border: 1px solid #232d2a !important; border-radius: 4px !important; }
-    input:focus { border-color: var(--accent-gold) !important; outline: none !important; }
-    
-    .menu-container { position: relative; display: inline-block; }
-    .dot-btn { background: transparent !important; border: none !important; color: var(--text-muted) !important; font-size: 16px; cursor: pointer; padding: 4px 8px; }
-    .dot-btn:hover { color: var(--accent-gold) !important; background: transparent !important; }
-    .dropdown-menu { display: none; position: absolute; right: 0; top: 24px; background: #141817; border: 1px solid var(--border-subtle); border-radius: 4px; z-index: 50; min-width: 100px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
-    .dropdown-menu.show { display: block; }
-    .dropdown-item { padding: 6px 12px; font-size: 12px; color: var(--text-main); cursor: pointer; text-align: left; width: 100%; background: transparent; border: none; }
-    .dropdown-item:hover { background: #1a2220; color: var(--accent-gold); }
-  `;
-  document.head.appendChild(styleInject);
 
   let savedKey = localStorage.getItem('ghost_identity');
   if (!savedKey) {
@@ -125,71 +73,28 @@ document.addEventListener('DOMContentLoaded', () => {
   myIdentity = savedKey;
   if (myIdentityInput) myIdentityInput.value = myIdentity;
 
-  let cachedTier = localStorage.getItem('ghost_tier');
-  let cachedExpiry = localStorage.getItem('ghost_tier_expiry');
-
-  if (cachedTier === 'PREMIUM') {
-    if (cachedExpiry && Date.now() >= parseInt(cachedExpiry)) {
-      isPremiumUser = false;
-      applyUIPremiumState(false);
-      localStorage.removeItem('ghost_tier');
-      localStorage.removeItem('ghost_tier_expiry');
-    } else {
-      isPremiumUser = true;
-      applyUIPremiumState(true);
-    }
-  } else {
-    isPremiumUser = false;
-    applyUIPremiumState(false);
-  }
-
   function applyUIPremiumState(premium, expiresAt = null) {
     isPremiumUser = premium;
     if (premium) {
       localStorage.setItem('ghost_tier', 'PREMIUM');
       if (expiresAt) localStorage.setItem('ghost_tier_expiry', expiresAt);
-      else if (!localStorage.getItem('ghost_tier_expiry')) {
-        localStorage.setItem('ghost_tier_expiry', Date.now() + (30 * 24 * 60 * 60 * 1000));
-      }
-      if (tierBadge) {
-        tierBadge.innerText = 'PREMIUM TIER';
-        tierBadge.style.background = '#1a2220';
-        tierBadge.style.color = '#c5a059';
-        tierBadge.style.borderColor = '#c5a059';
-      }
+      if (tierBadge) tierBadge.innerText = 'PREMIUM TIER';
       if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'block';
     } else {
       localStorage.removeItem('ghost_tier');
       localStorage.removeItem('ghost_tier_expiry');
-      if (tierBadge) {
-        tierBadge.innerText = 'FREE TIER';
-        tierBadge.style.background = 'transparent';
-        tierBadge.style.color = '#8892b0';
-        tierBadge.style.borderColor = '#232d2a';
-      }
+      if (tierBadge) tierBadge.innerText = 'FREE TIER';
       if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'none';
     }
   }
+
+  const cachedTier = localStorage.getItem('ghost_tier');
+  if (cachedTier === 'PREMIUM') applyUIPremiumState(true);
 
   function logChat(msg) {
     if (!chatBox) return;
     const div = document.createElement('div');
     div.innerText = msg;
-    chatBox.appendChild(div);
-    chatBox.scrollTop = chatBox.scrollHeight;
-  }
-
-  function logFileReceived(senderKey, fileName, fileData, fileType) {
-    if (!chatBox) return;
-    const div = document.createElement('div');
-    div.style.margin = '6px 0';
-    const shortKey = senderKey ? senderKey.substring(0, 8) : 'Peer';
-    const safeName = escapeHTML(fileName);
-    if (fileType && fileType.startsWith('image/')) {
-      div.innerHTML = `<strong>${shortKey} [Image]:</strong> ${safeName}<br><img src="${fileData}" style="max-width: 150px; border-radius: 4px; margin-top: 4px;">`;
-    } else {
-      div.innerHTML = `<strong>${shortKey} [File]:</strong> <a href="${fileData}" download="${safeName}" style="color: #c5a059; text-decoration: underline;">📁 Download ${safeName}</a>`;
-    }
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
   }
@@ -207,7 +112,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return ramContacts.some(c => c.key === key);
   }
 
-  // --- SAFE WEBSOCKET SENDER (Prevents crashes when reconnecting) ---
   function safeSend(dataObj) {
     const jsonStr = JSON.stringify(dataObj);
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -225,8 +129,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function initWebSocket() {
-    const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '8158';
-    const socketUrl = isLocalBrowser ? 'ws://127.0.0.1:8158' : 'wss://ghost-talk-backend.onrender.com';
+    const hostname = window.location.hostname;
+    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '';
+    const socketHost = isLocal ? '127.0.0.1:8158' : 'ghost-talk-backend.onrender.com';
+    const socketUrl = `wss://${socketHost}`;
 
     socket = new WebSocket(socketUrl);
 
@@ -270,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
     switch (msg.type) {
       case 'registered':
         logChat('System: Registered on secure mesh.');
-        if (msg.tier === 'PREMIUM') applyUIPremiumState(true, msg.expiresAt);
+        applyUIPremiumState(msg.tier === 'PREMIUM', msg.expiresAt);
         break;
       case 'tier-updated':
         applyUIPremiumState(msg.tier === 'PREMIUM', msg.expiresAt);
@@ -280,7 +186,16 @@ document.addEventListener('DOMContentLoaded', () => {
         myIdentity = msg.customKey.startsWith('GHOST-') ? msg.customKey : `GHOST-${msg.customKey}`;
         localStorage.setItem('ghost_identity', myIdentity);
         if (myIdentityInput) myIdentityInput.value = myIdentity;
-        alert(`✅ Custom Handle Set: ${myIdentity}`);
+        
+        // CRITICAL FIX: Re-register socket connection with the new custom identity immediately
+        safeSend({
+          type: 'register',
+          key: myIdentity,
+          claimedTier: 'PREMIUM',
+          claimedExpiry: localStorage.getItem('ghost_tier_expiry') || ''
+        });
+
+        alert(`✅ Custom Handle Set & Registered: ${myIdentity}`);
         if (customKeyInput) customKeyInput.value = '';
         break;
       case 'custom-key-error':
@@ -345,12 +260,6 @@ document.addEventListener('DOMContentLoaded', () => {
         renderContacts();
         logChat(`${msg.senderKey.substring(0, 8)}: ${escapeHTML(msg.text)}`);
         break;
-      case 'file-transfer':
-        ensureContact(msg.senderKey, 'Peer');
-        activeCallTarget = msg.senderKey;
-        renderContacts();
-        logFileReceived(msg.senderKey, msg.fileName, msg.fileData, msg.fileType);
-        break;
       case 'decline':
         alert('Call rejected.');
         endCall(false);
@@ -405,7 +314,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function setupWebRTC(wantVideo) {
     if (peerConnection) peerConnection.close();
-
     peerConnection = new RTCPeerConnection(rtcConfig);
 
     peerConnection.onicecandidate = (e) => {
@@ -475,26 +383,6 @@ document.addEventListener('DOMContentLoaded', () => {
   btnCallVideo.onclick = () => startCall(true);
   btnEndSession.onclick = () => endCall(true);
 
-  if (btnToggleMic) {
-    btnToggleMic.onclick = () => {
-      if (localStream && localStream.getAudioTracks().length > 0) {
-        micMuted = !micMuted;
-        localStream.getAudioTracks()[0].enabled = !micMuted;
-        btnToggleMic.innerText = micMuted ? '🎙️ Mic Off' : '🎙️ Mic On';
-      }
-    };
-  }
-
-  if (btnToggleCam) {
-    btnToggleCam.onclick = () => {
-      if (localStream && localStream.getVideoTracks().length > 0) {
-        camOff = !camOff;
-        localStream.getVideoTracks()[0].enabled = !camOff;
-        btnToggleCam.innerText = camOff ? '📹 Cam Off' : '📹 Cam On';
-      }
-    };
-  }
-
   btnChat.onclick = () => {
     if (!activeCallTarget || !isValidContact(activeCallTarget)) { alert('Select a contact.'); return; }
     safeSend({ type: 'text-notify', targetKey: activeCallTarget });
@@ -511,35 +399,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   chatInput.onkeypress = (e) => { if (e.key === 'Enter') btnSend.click(); };
 
-  // --- HARDENED FILE ATTACHMENT HANDLER (5MB Cap) ---
-  if (btnAttach && fileInput) {
-    btnAttach.onclick = () => {
-      if (!isPremiumUser) { alert('Premium Feature required.'); return; }
-      if (!activeCallTarget) { alert('Select contact first.'); return; }
-      fileInput.click();
-    };
-
-    fileInput.onchange = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      if (file.size > 5 * 1024 * 1024) {
-        alert('⚠️ File size exceeds 5MB RAM ceiling.');
-        fileInput.value = '';
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        safeSend({
-          type: 'file-transfer', targetKey: activeCallTarget,
-          fileName: file.name, fileType: file.type, fileData: evt.target.result
-        });
-        logChat(`Me [File]: ${escapeHTML(file.name)}`);
-        fileInput.value = '';
-      };
-      reader.readAsDataURL(file);
-    };
-  }
-
   btnAddContact.onclick = () => {
     const name = contactNameInput.value.trim();
     let key = contactKeyInput.value.trim().toUpperCase();
@@ -551,7 +410,6 @@ document.addEventListener('DOMContentLoaded', () => {
     renderContacts();
   };
 
-  // --- PERFECTED CONTACT RENDER WITH VISUAL SELECTION & 3-DOT MENU ---
   function renderContacts() {
     contactsListContainer.innerHTML = '';
     if (ramContacts.length === 0) {
@@ -563,14 +421,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const isSelected = activeCallTarget === c.key;
       const card = document.createElement('div');
       card.className = `contact-card ${isSelected ? 'selected' : ''}`;
-      card.style.display = 'flex';
-      card.style.alignItems = 'center';
-      card.style.justifyContent = 'space-between';
-      card.style.padding = '8px';
-      card.style.marginBottom = '6px';
-      card.style.background = isSelected ? '#1a2220' : '#141817';
-      card.style.borderRadius = '4px';
-      card.style.border = isSelected ? '1px solid var(--accent-gold)' : '1px solid #232d2a';
       
       const infoDiv = document.createElement('div');
       infoDiv.style.flexGrow = '1';
@@ -679,120 +529,6 @@ document.addEventListener('DOMContentLoaded', () => {
       safeSend({ type: 'set-custom-key', customKey: desiredKey });
     };
   }
-
-  if (btnShowQr) {
-    btnShowQr.onclick = () => {
-      if (!myIdentity) return;
-      if (qrModalTitle) qrModalTitle.innerText = 'My Identity QR';
-      if (qrDisplayContainer) qrDisplayContainer.style.display = 'inline-block';
-      if (qrScannerContainer) qrScannerContainer.style.display = 'none';
-      if (qrcodeDiv) {
-        qrcodeDiv.innerHTML = '';
-        if (window.QRCode) {
-          new QRCode(qrcodeDiv, { text: myIdentity.toUpperCase(), width: 180, height: 180, colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
-        }
-      }
-      if (qrModal) qrModal.style.display = 'flex';
-    };
-  }
-
-  if (btnScanQr) {
-    btnScanQr.onclick = async () => {
-      if (qrModalTitle) qrModalTitle.innerText = 'Scan Contact QR';
-      if (qrDisplayContainer) qrDisplayContainer.style.display = 'none';
-      if (qrScannerContainer) qrScannerContainer.style.display = 'block';
-      if (qrModal) qrModal.style.display = 'flex';
-
-      try {
-        qrCameraStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } }
-        });
-        if (qrVideo) {
-          qrVideo.srcObject = qrCameraStream;
-          qrVideo.setAttribute('playsinline', true);
-          await qrVideo.play();
-        }
-        requestAnimationFrame(scanQrFrame);
-      } catch (err) {
-        alert('❌ Camera unavailable or permissions denied.');
-        closeQrModal();
-      }
-    };
-  }
-
-  function scanQrFrame() {
-    if (!qrCameraStream || !qrVideo || qrVideo.readyState !== qrVideo.HAVE_ENOUGH_DATA) {
-      qrScanAnimation = requestAnimationFrame(scanQrFrame);
-      return;
-    }
-
-    if (!qrCanvas) return;
-    const ctx = qrCanvas.getContext('2d');
-    qrCanvas.width = qrVideo.videoWidth;
-    qrCanvas.height = qrVideo.videoHeight;
-    ctx.drawImage(qrVideo, 0, 0, qrCanvas.width, qrCanvas.height);
-
-    const imageData = ctx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
-    if (window.jsQR) {
-      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-      if (code && code.data) {
-        let scannedKey = code.data.trim().toUpperCase();
-        if (!scannedKey.startsWith('GHOST-')) scannedKey = 'GHOST-' + scannedKey;
-        if (contactKeyInput) contactKeyInput.value = scannedKey;
-        closeQrModal();
-        alert(`✅ Scanned Key: ${scannedKey}`);
-        return;
-      }
-    }
-    qrScanAnimation = requestAnimationFrame(scanQrFrame);
-  }
-
-  if (btnUploadQrImg && qrFileInput) {
-    btnUploadQrImg.onclick = () => qrFileInput.click();
-    qrFileInput.onchange = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          ctx.drawImage(img, 0, 0);
-          const imageData = ctx.getImageData(0, 0, img.width, img.height);
-          if (window.jsQR) {
-            const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-            if (code && code.data) {
-              let scannedKey = code.data.trim().toUpperCase();
-              if (!scannedKey.startsWith('GHOST-')) scannedKey = 'GHOST-' + scannedKey;
-              if (contactKeyInput) contactKeyInput.value = scannedKey;
-              closeQrModal();
-              alert(`✅ Scanned Key: ${scannedKey}`);
-            } else {
-              alert('❌ No valid QR code detected in image.');
-            }
-          }
-        };
-        img.src = event.target.result;
-      };
-      reader.readAsDataURL(file);
-      qrFileInput.value = '';
-    };
-  }
-
-  function stopQrCamera() {
-    if (qrScanAnimation) { cancelAnimationFrame(qrScanAnimation); qrScanAnimation = null; }
-    if (qrCameraStream) { qrCameraStream.getTracks().forEach(t => t.stop()); qrCameraStream = null; }
-  }
-
-  function closeQrModal() {
-    stopQrCamera();
-    if (qrModal) qrModal.style.display = 'none';
-  }
-
-  if (btnCloseQr) btnCloseQr.onclick = closeQrModal;
 
   btnWipe.onclick = () => {
     endCall(true);

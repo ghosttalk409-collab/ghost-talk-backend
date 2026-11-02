@@ -1,7 +1,6 @@
 const http = require('http');
 const express = require('express');
 const { WebSocketServer } = require('ws');
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -27,16 +26,7 @@ app.get('/download-apk', (req, res) => {
   const apkFilePath = path.join(__dirname, 'public', 'GhostTalk.apk');
   res.download(apkFilePath, 'GhostTalk.apk', (err) => {
     if (err) {
-      res.status(404).send(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head><meta charset="UTF-8"><title>Direct Download Notice</title></head>
-        <body style="background:#0b0f0e; color:#f3f4f6; font-family:sans-serif; text-align:center; padding-top:120px;">
-          <h2 style="color:#d4af37; font-family:serif; font-size:28px;">Sovereign Package Preparing</h2>
-          <p style="color:#9ca3af; margin-top:16px; font-size:15px;">The local APK binary is queued. Launch the <a href="/app" style="color:#d4af37; text-decoration:underline;">Secure Web Client</a> instantly.</p>
-        </body>
-        </html>
-      `);
+      res.status(404).send('APK binary preparing.');
     }
   });
 });
@@ -182,13 +172,11 @@ wss.on('connection', (ws) => {
           return;
         }
 
-        // Anti-piracy collision check: ensure handle isn't claimed by another base key or active socket
         if ((customHandles.has(desiredKey) && customHandles.get(desiredKey) !== currentKey) || clients.has(desiredKey)) {
           ws.send(JSON.stringify({ type: 'custom-key-error', message: '⚠️ Handle already claimed.' }));
           return;
         }
 
-        // Clear any old custom handle owned by this key
         for (const [handle, ownerKey] of customHandles.entries()) {
           if (ownerKey === currentKey) customHandles.delete(handle);
         }
@@ -201,6 +189,7 @@ wss.on('connection', (ws) => {
       }
 
       if (data.type === 'register') {
+        if (currentKey) clients.delete(currentKey);
         currentKey = data.key.toUpperCase();
         clients.set(currentKey, ws);
         
@@ -215,13 +204,11 @@ wss.on('connection', (ws) => {
         broadcastAdminMetrics();
       } else if (data.targetKey) {
         const targetKeyUpper = data.targetKey.toUpperCase();
-        // Resolve target through custom handles mapping back to base socket key
         const targetAddress = customHandles.get(targetKeyUpper) || targetKeyUpper;
         
         if (clients.has(targetAddress)) {
           const targetWs = clients.get(targetAddress);
           if (targetWs && targetWs.readyState === 1) {
-            // If sender has an active custom handle, send that as senderKey; otherwise base key
             let senderHandle = currentKey;
             for (const [handle, ownerKey] of customHandles.entries()) {
               if (ownerKey === currentKey) { senderHandle = handle; break; }

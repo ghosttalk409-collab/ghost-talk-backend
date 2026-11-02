@@ -23,10 +23,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const remoteVideo = document.getElementById('remote-video');
   const remoteAudio = document.getElementById('remote-audio');
   
-  const callControls = document.getElementById('call-controls');
-  const btnToggleMic = document.getElementById('btn-toggle-mic');
-  const btnToggleCam = document.getElementById('btn-toggle-cam');
-  
   const chatBox = document.getElementById('chat-box');
   const chatInput = document.getElementById('chat-input');
   const btnSend = document.getElementById('btn-send');
@@ -48,22 +44,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let isPremiumUser = false;
   let peerConnection = null;
   let localStream = null;
-  let micMuted = false;
-  let camOff = false;
   let ramContacts = [];
   let reconnectAttempts = 0;
-  
   let callState = 'IDLE';
   let pendingSocketQueue = [];
-
-  const security = new SecurityGuard();
-
-  const rtcConfig = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
-    ]
-  };
 
   let savedKey = localStorage.getItem('ghost_identity');
   if (!savedKey) {
@@ -186,6 +170,14 @@ document.addEventListener('DOMContentLoaded', () => {
         myIdentity = msg.customKey.startsWith('GHOST-') ? msg.customKey : `GHOST-${msg.customKey}`;
         localStorage.setItem('ghost_identity', myIdentity);
         if (myIdentityInput) myIdentityInput.value = myIdentity;
+        
+        safeSend({
+          type: 'register',
+          key: myIdentity,
+          claimedTier: 'PREMIUM',
+          claimedExpiry: localStorage.getItem('ghost_tier_expiry') || ''
+        });
+
         alert(`✅ Custom Handle Set: ${myIdentity}`);
         if (customKeyInput) customKeyInput.value = '';
         break;
@@ -205,7 +197,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ensureContact(msg.senderKey, 'Caller');
         activeCallTarget = msg.senderKey;
         renderContacts();
-        if (callerIdText) callerIdText.innerText = `Secure Call from ${msg.senderKey} (${msg.hasVideo ? 'Video' : 'Audio'})`;
+        if (callerIdText) callerIdText.innerText = `Secure Call from ${msg.senderKey}`;
         if (callModal) callModal.style.display = 'flex';
 
         btnAccept.onclick = async () => {
@@ -264,26 +256,18 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function startCall(wantVideo) {
-    if (callState !== 'IDLE') {
-      alert('Call already in progress.');
-      return;
-    }
+    if (callState !== 'IDLE') return;
     if (!activeCallTarget || !isValidContact(activeCallTarget)) {
       alert('Select a valid contact first.');
       return;
     }
-    if (wantVideo && !isPremiumUser) {
-      alert('Video calls require Premium Tier.');
-      return;
-    }
-
     try {
       localStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: wantVideo ? { width: { ideal: 640 }, height: { ideal: 480 } } : false
       });
     } catch (err) {
-      alert('Microphone/Camera access required.');
+      alert('Media access required.');
       return;
     }
 
@@ -335,7 +319,6 @@ document.addEventListener('DOMContentLoaded', () => {
         localVideo.play().catch(() => {});
         videoContainer.style.display = 'block';
       }
-      callControls.style.display = 'flex';
     }
   }
 
@@ -358,16 +341,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (remoteAudio) remoteAudio.srcObject = null;
 
     videoContainer.style.display = 'none';
-    callControls.style.display = 'none';
     chatBox.innerHTML = '';
     chatInput.value = '';
 
     callState = 'IDLE';
-    micMuted = false;
-    camOff = false;
-    if (btnToggleMic) btnToggleMic.innerText = '🎙️ Mic On';
-    if (btnToggleCam) btnToggleCam.innerText = '📹 Cam On';
-    logChat('System: Call ended. RAM cleared.');
+    logChat('System: Call ended.');
   }
 
   btnCallAudio.onclick = () => startCall(false);
@@ -429,7 +407,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const dotBtn = document.createElement('button');
       dotBtn.className = 'dot-btn';
       dotBtn.innerText = '⋮';
-      dotBtn.title = 'Options';
 
       const dropdownMenu = document.createElement('div');
       dropdownMenu.className = 'dropdown-menu';

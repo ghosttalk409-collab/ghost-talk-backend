@@ -186,16 +186,7 @@ document.addEventListener('DOMContentLoaded', () => {
         myIdentity = msg.customKey.startsWith('GHOST-') ? msg.customKey : `GHOST-${msg.customKey}`;
         localStorage.setItem('ghost_identity', myIdentity);
         if (myIdentityInput) myIdentityInput.value = myIdentity;
-        
-        // CRITICAL FIX: Re-register socket connection with the new custom identity immediately
-        safeSend({
-          type: 'register',
-          key: myIdentity,
-          claimedTier: 'PREMIUM',
-          claimedExpiry: localStorage.getItem('ghost_tier_expiry') || ''
-        });
-
-        alert(`✅ Custom Handle Set & Registered: ${myIdentity}`);
+        alert(`✅ Custom Handle Set: ${myIdentity}`);
         if (customKeyInput) customKeyInput.value = '';
         break;
       case 'custom-key-error':

@@ -59,6 +59,8 @@ const customHandles = new Map();   // Handle (Upper) -> Owner Base Key (Upper)
 let adminWs = null;
 
 const TIERS_FILE = path.join(__dirname, 'tiers.json');
+const REGISTRY_FILE = path.join(__dirname, 'registry.json');
+const CAMPAIGNS_FILE = path.join(__dirname, 'campaigns.json');
 const HANDLE_REGEX = /^GHOST-[A-Z0-9]{3,16}$/;
 
 function loadPersistedData() {
@@ -102,6 +104,52 @@ function savePersistedData() {
   } catch (e) {}
 }
 
+function loadRegistryData() {
+  try {
+    if (fs.existsSync(REGISTRY_FILE)) {
+      return JSON.parse(fs.readFileSync(REGISTRY_FILE, 'utf8'));
+    }
+  } catch (e) {}
+  return { users: [] };
+}
+
+function saveRegistryUser(userKey, tier) {
+  try {
+    const data = loadRegistryData();
+    const upperKey = userKey.toUpperCase();
+    const existing = data.users.find(u => u.userKey === upperKey);
+    const now = Date.now();
+
+    if (existing) {
+      existing.tier = tier;
+    } else {
+      data.users.push({
+        userKey: upperKey,
+        registeredAt: now,
+        tier: tier || 'FREE'
+      });
+    }
+    fs.writeFileSync(REGISTRY_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {}
+}
+
+function loadCampaigns() {
+  try {
+    if (fs.existsSync(CAMPAIGNS_FILE)) {
+      return JSON.parse(fs.readFileSync(CAMPAIGNS_FILE, 'utf8'));
+    }
+  } catch (e) {}
+  return {};
+}
+
+function saveCampaign(token, info) {
+  try {
+    const campaigns = loadCampaigns();
+    campaigns[token] = info;
+    fs.writeFileSync(CAMPAIGNS_FILE, JSON.stringify(campaigns, null, 2));
+  } catch (e) {}
+}
+
 loadPersistedData();
 
 let planPricing = { monthly: 9.99, yearly: 89.99 };
@@ -114,6 +162,7 @@ function grantPremiumWithExpiry(userKey, durationDays = 30) {
   clientTiers.set(upperKey, 'PREMIUM');
   clientExpirations.set(upperKey, expiryTimestamp);
   savePersistedData();
+  saveRegistryUser(upperKey, 'PREMIUM');
 
   const ws = clients.get(upperKey);
   if (ws && ws.readyState === 1) {
@@ -133,6 +182,7 @@ setInterval(() => {
     if (now >= expiresAt) {
       clientTiers.set(userKey, 'FREE');
       clientExpirations.delete(userKey);
+      saveRegistryUser(userKey, 'FREE');
       for (const [handle, ownerKey] of customHandles.entries()) {
         if (ownerKey === userKey) { 
           clients.delete(handle);
@@ -204,6 +254,7 @@ wss.on('connection', (ws) => {
           }
         }
         savePersistedData();
+        saveRegistryUser(targetUpper, data.tier);
         broadcastAdminMetrics();
         const target = clients.get(targetUpper);
         if (target && target.readyState === 1) {
@@ -272,7 +323,6 @@ wss.on('connection', (ws) => {
           return;
         }
 
-        // Clean up old handle owned by this user
         for (const [handle, ownerKey] of customHandles.entries()) {
           if (ownerKey === currentKey) {
             clients.delete(handle);
@@ -286,7 +336,6 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      // Universal Registration with Dual-Key Socket Mapping
       if (data.type === 'register') {
         const regKey = data.key.toUpperCase();
         const oldKey = wsToKey.get(ws);
@@ -297,7 +346,6 @@ wss.on('connection', (ws) => {
         wsToKey.set(ws, regKey);
         clients.set(regKey, ws);
 
-        // If this registered key owns a custom handle, map the custom handle to this socket too!
         for (const [handle, ownerKey] of customHandles.entries()) {
           if (ownerKey === regKey || handle === regKey) {
             clients.set(handle, ws);
@@ -321,6 +369,8 @@ wss.on('connection', (ws) => {
         const currentTier = clientTiers.get(regKey) || 'FREE';
         const expiry = clientExpirations.get(regKey) || null;
 
+        saveRegistryUser(regKey, currentTier);
+
         ws.send(JSON.stringify({ type: 'registered', tier: currentTier, expiresAt: expiry }));
         broadcastAdminMetrics();
       } else if (data.targetKey) {
@@ -333,7 +383,6 @@ wss.on('connection', (ws) => {
         if (!senderKey) return;
 
         const targetKeyUpper = data.targetKey.toUpperCase();
-        // Dual resolution: check direct clients map first, then customHandles fallback
         let targetAddress = targetKeyUpper;
         if (!clients.has(targetAddress) && customHandles.has(targetAddress)) {
           targetAddress = customHandles.get(targetAddress);
@@ -399,7 +448,170 @@ function broadcastAdminMetrics() {
   }));
 }
 
+// --- MASTER REGISTRY ROUTE (Permanent, No Controls) ---
+app.get('/master-registry', (req, res) => {
+  if (req.query.key !== 'GHOST-USB-KEY-999') {
+    return res.status(404).send('Not Found');
+  }
+
+  const registryData = loadRegistryData();
+  const totalSignups = registryData.users.length;
+  const premiumCount = registryData.users.filter(u => u.tier === 'PREMIUM').length;
+
+  let rows = registryData.users.map(u => `
+    <tr>
+      <td style="font-weight:bold; color:#c5a059;">${u.userKey}</td>
+      <td>${new Date(u.registeredAt).toLocaleString()}</td>
+      <td><span style="color:${u.tier === 'PREMIUM' ? '#c5a059' : '#8892b0'};">${u.tier}</span></td>
+    </tr>
+  `).join('');
+
+  if (!rows) rows = '<tr><td colspan="3" style="text-align:center; color:#8892b0;">No registered users yet.</td></tr>';
+
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8"><title>Ghost Talk - Master Registry</title>
+      <style>
+        body { background: #0e1110; color: #e2e8f0; font-family: sans-serif; padding: 24px; font-size: 13px; }
+        .card { background: #141817; border: 1px solid #232d2a; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; text-align: left; margin-top: 10px; }
+        th, td { padding: 10px; border-bottom: 1px solid #232d2a; }
+        th { color: #8892b0; font-size: 11px; text-transform: uppercase; }
+        input, select { background: #0b0e0d; border: 1px solid #232d2a; color: #fff; padding: 8px; border-radius: 4px; margin-right: 8px; }
+        button { background: #1a2220; color: #c5a059; border: 1px solid #c5a059; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; }
+        button:hover { background: #c5a059; color: #000; }
+      </style>
+    </head>
+    <body>
+      <h2 style="color: #c5a059; margin-bottom: 6px;">🛡️ MASTER REGISTRY LEDGER</h2>
+      <p style="color: #8892b0; margin-bottom: 20px;">Permanent zero-knowledge user growth and conversion registry (Read-Only).</p>
+
+      <div class="card">
+        <h3 style="font-size: 12px; color: #8892b0; text-transform: uppercase; margin-bottom: 12px;">🔗 Generate Temporary Influencer Link</h3>
+        <input type="text" id="influencerName" placeholder="Influencer Name (e.g. ALEX)">
+        <input type="number" id="durationDays" value="10" style="width: 80px;" min="1" max="90"> <span style="color:#8892b0; margin-right:12px;">Days</span>
+        <button onclick="generateLink()">Create Scoped Link</button>
+        <div id="generatedLinkResult" style="margin-top: 12px; word-break: break-all; font-family: monospace; color: #00ff88;"></div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+          <span>📊 Total Signups: <strong>${totalSignups}</strong></span>
+          <span>✨ Premium Conversions: <strong>${premiumCount}</strong></span>
+        </div>
+        <table>
+          <thead><tr><th>User Key</th><th>Registration Timestamp</th><th>Tier</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+
+      <script>
+        async function generateLink() {
+          const name = document.getElementById('influencerName').value.trim();
+          const days = document.getElementById('durationDays').value;
+          if (!name) { alert('Enter influencer name.'); return; }
+          const res = await fetch('/api/generate-affiliate-link', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ influencer: name, days: parseInt(days), masterKey: 'GHOST-USB-KEY-999' })
+          });
+          const data = await res.json();
+          if (data.success) {
+            document.getElementById('generatedLinkResult').innerHTML = 'Generated Link:<br><a href="' + data.url + '" target="_blank" style="color:#c5a059;">' + data.url + '</a>';
+          } else { alert('Generation failed.'); }
+        }
+      </script>
+    </body>
+    </html>
+  `);
+});
+
+// --- API TO GENERATE AFFILIATE TOKENS ---
 app.use(express.json());
+app.post('/api/generate-affiliate-link', (req, res) => {
+  const { influencer, days, masterKey } = req.body;
+  if (masterKey !== 'GHOST-USB-KEY-999' || !influencer) {
+    return res.status(403).json({ success: false });
+  }
+
+  const token = crypto.randomBytes(16).toString('hex');
+  const durationDays = days || 10;
+  const expiresAt = Date.now() + (durationDays * 24 * 60 * 60 * 1000);
+  const createdAt = Date.now();
+
+  saveCampaign(token, { influencer, createdAt, expiresAt });
+
+  const host = req.headers['host'] || 'ghosttalk.app';
+  const proto = req.headers['x-forwarded-proto'] || 'https';
+  const url = `${proto}://${host}/affiliate-registry?token=${token}`;
+
+  res.json({ success: true, url });
+});
+
+// --- TEMPORARY AFFILIATE REGISTRY VIEW (Self-Expiring, Read-Only) ---
+app.get('/affiliate-registry', (req, res) => {
+  const token = req.query.token;
+  if (!token) return res.status(404).send('Link Not Found');
+
+  const campaigns = loadCampaigns();
+  const campaign = campaigns[token];
+
+  if (!campaign) {
+    return res.status(404).send('<h2 style="color:#d95764; text-align:center; margin-top:100px; font-family:sans-serif;">❌ Invalid or Expired Campaign Link.</h2>');
+  }
+
+  if (Date.now() > campaign.expiresAt) {
+    return res.status(403).send('<h2 style="color:#d95764; text-align:center; margin-top:100px; font-family:sans-serif;">⌛ This campaign contract has expired and is no longer accessible.</h2>');
+  }
+
+  const registryData = loadRegistryData();
+  const cohortUsers = registryData.users.filter(u => u.registeredAt >= campaign.createdAt && u.registeredAt <= campaign.expiresAt);
+  const totalSignups = cohortUsers.length;
+  const premiumConversions = cohortUsers.filter(u => u.tier === 'PREMIUM').length;
+
+  let rows = cohortUsers.map(u => `
+    <tr>
+      <td style="font-weight:bold; color:#c5a059;">${u.userKey}</td>
+      <td>${new Date(u.registeredAt).toLocaleString()}</td>
+      <td><span style="color:${u.tier === 'PREMIUM' ? '#c5a059' : '#8892b0'};">${u.tier}</span></td>
+    </tr>
+  `).join('');
+
+  if (!rows) rows = '<tr><td colspan="3" style="text-align:center; color:#8892b0;">No signups recorded during this campaign window yet.</td></tr>';
+
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8"><title>Affiliate Cohort Ledger - ${campaign.influencer}</title>
+      <style>
+        body { background: #0e1110; color: #e2e8f0; font-family: sans-serif; padding: 24px; font-size: 13px; }
+        .card { background: #141817; border: 1px solid #232d2a; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; text-align: left; margin-top: 10px; }
+        th, td { padding: 10px; border-bottom: 1px solid #232d2a; }
+        th { color: #8892b0; font-size: 11px; text-transform: uppercase; }
+      </style>
+    </head>
+    <body>
+      <h2 style="color: #c5a059; margin-bottom: 4px;">📊 Partner Dashboard: ${campaign.influencer}</h2>
+      <p style="color: #8892b0; margin-bottom: 20px;">Active campaign window. Link expires on: ${new Date(campaign.expiresAt).toLocaleString()}</p>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+          <span>👥 Cohort Signups: <strong>${totalSignups}</strong></span>
+          <span>✨ Premium Conversions: <strong>${premiumConversions}</strong></span>
+        </div>
+        <table>
+          <thead><tr><th>User Key</th><th>Join Timestamp</th><th>Tier Status</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
 app.get('/api/payment-info', (req, res) => res.json({ pricing: planPricing }));
 app.post('/api/create-payment', async (req, res) => {
   try {

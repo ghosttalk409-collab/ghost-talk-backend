@@ -118,7 +118,7 @@
 
       const dormantTbody = document.getElementById('dormantPeerTableBody');
       dormantTbody.innerHTML = '';
-      if (m.dormantPeers.length === 0) {
+      if (!m.dormantPeers || m.dormantPeers.length === 0) {
         dormantTbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No dormant peers.</td></tr>';
       } else {
         m.dormantPeers.forEach(peer => {

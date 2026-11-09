@@ -425,13 +425,14 @@ wss.on('connection', (ws) => {
 function broadcastAdminMetrics() {
   if (!adminWs || adminWs.readyState !== 1) return;
   const activePeers = [];
-  const uniqueKeys = new Set();
+  const dormantPeers = [];
+  const activeKeysSet = new Set();
 
   clients.forEach((ws, key) => {
     if (key !== 'ADMIN-ROOT') {
       const baseOwnerKey = customHandles.get(key) || key;
-      if (!uniqueKeys.has(baseOwnerKey)) {
-        uniqueKeys.add(baseOwnerKey);
+      if (!activeKeysSet.has(baseOwnerKey)) {
+        activeKeysSet.add(baseOwnerKey);
         const tier = clientTiers.get(baseOwnerKey) || 'FREE';
         let userHandle = baseOwnerKey;
         for (const [handle, ownerKey] of customHandles.entries()) {
@@ -442,9 +443,24 @@ function broadcastAdminMetrics() {
     }
   });
 
+  const registryData = loadRegistryData();
+  registryData.users.forEach(u => {
+    const baseOwnerKey = customHandles.get(u.userKey) || u.userKey;
+    if (!activeKeysSet.has(baseOwnerKey)) {
+      let userHandle = baseOwnerKey;
+      for (const [handle, ownerKey] of customHandles.entries()) {
+        if (ownerKey === baseOwnerKey) { userHandle = handle; break; }
+      }
+      // Avoid duplicate pushes in dormant list
+      if (!dormantPeers.some(p => p.key === userHandle)) {
+        dormantPeers.push({ key: userHandle, tier: clientTiers.get(baseOwnerKey) || u.tier || 'FREE' });
+      }
+    }
+  });
+
   adminWs.send(JSON.stringify({
     type: 'admin-telemetry',
-    metrics: { totalConnections: uniqueKeys.size, activePeers, pricing: planPricing }
+    metrics: { totalConnections: activeKeysSet.size, activePeers, dormantPeers, pricing: planPricing }
   }));
 }
 
@@ -561,7 +577,8 @@ app.get('/affiliate-registry', (req, res) => {
     return res.status(404).send('<h2 style="color:#d95764; text-align:center; margin-top:100px; font-family:sans-serif;">❌ Invalid or Expired Campaign Link.</h2>');
   }
 
-  if (Date.now() > campaign.expiresAt) {
+  // Safe time window check
+  if (Date.now() > Number(campaign.expiresAt)) {
     return res.status(403).send('<h2 style="color:#d95764; text-align:center; margin-top:100px; font-family:sans-serif;">⌛ This campaign contract has expired and is no longer accessible.</h2>');
   }
 

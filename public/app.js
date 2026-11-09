@@ -84,6 +84,11 @@ document.addEventListener('DOMContentLoaded', () => {
     ]
   };
 
+  // --- DYNAMIC API BASE & WEBSOCKET CONFIG ---
+  const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '8158';
+  const apiBase = isLocalBrowser ? 'http://127.0.0.1:8158' : 'https://ghost-talk-backend.onrender.com';
+  const socketUrl = isLocalBrowser ? 'ws://127.0.0.1:8158' : 'wss://ghost-talk-backend.onrender.com';
+
   // --- OLD MONEY MATTE DARK & GOLD THEME ---
   const styleInject = document.createElement('style');
   styleInject.innerHTML = `
@@ -222,9 +227,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function initWebSocket() {
-    const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '8158';
-    const socketUrl = isLocalBrowser ? 'ws://127.0.0.1:8158' : 'wss://ghost-talk-backend.onrender.com';
-
     socket = new WebSocket(socketUrl);
 
     socket.onopen = () => {
@@ -273,7 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
         applyUIPremiumState(msg.tier === 'PREMIUM', msg.expiresAt);
         logChat(`System: Tier updated to ${msg.tier}.`);
         break;
-            case 'custom-key-success':
+      case 'custom-key-success':
         myIdentity = msg.customKey.startsWith('GHOST-') ? msg.customKey : `GHOST-${msg.customKey}`;
         localStorage.setItem('ghost_identity', myIdentity);
         if (myIdentityInput) myIdentityInput.value = myIdentity;
@@ -281,7 +283,6 @@ document.addEventListener('DOMContentLoaded', () => {
         alert(`✅ Custom Handle Set: ${myIdentity}`);
         if (customKeyInput) customKeyInput.value = '';
 
-        // Force a clean, fresh WebSocket re-connection under the new custom identity for APK stability
         initWebSocket();
         break;
       case 'text-notify':
@@ -639,7 +640,7 @@ document.addEventListener('DOMContentLoaded', () => {
   tierBadge.onclick = async () => {
     if (isPremiumUser) { alert('✨ Premium active.'); return; }
     try {
-      const res = await fetch('/api/payment-info');
+      const res = await fetch(`${apiBase}/api/payment-info`);
       const data = await res.json();
       if (modalDisplayPrice) modalDisplayPrice.innerText = `$${data.pricing.monthly}`;
     } catch (e) {}
@@ -653,7 +654,7 @@ document.addEventListener('DOMContentLoaded', () => {
       btnStartCheckout.innerText = 'Initializing...';
       btnStartCheckout.disabled = true;
       try {
-        const response = await fetch('/api/create-payment', {
+        const response = await fetch(`${apiBase}/api/create-payment`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userKey: myIdentity, planType: 'monthly' })
         });

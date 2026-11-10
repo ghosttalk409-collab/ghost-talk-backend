@@ -2,64 +2,71 @@ import { FrameCrypto } from './e2ee.js';
 import { SecurityGuard } from './security.js';
 
 document.addEventListener('DOMContentLoaded', () => {
-  const myIdentityInput = document.getElementById('my-identity');
-  const statusBar = document.getElementById('status-bar');
-  const tierBadge = document.getElementById('tier-badge');
-  const premiumCustomKeyBox = document.getElementById('premium-custom-key-box');
-  const customKeyInput = document.getElementById('custom-key-input');
-  const btnSaveCustomKey = document.getElementById('btn-save-custom-key');
+  const $ = id => document.getElementById(id);
+  const myIdentityInput = $('my-identity');
+  const statusBar = $('status-bar');
+  const tierBadge = $('tier-badge');
+  const premiumCustomKeyBox = $('premium-custom-key-box');
+  const customKeyInput = $('custom-key-input');
+  const btnSaveCustomKey = $('btn-save-custom-key');
 
-  const contactNameInput = document.getElementById('contact-name');
-  const contactKeyInput = document.getElementById('contact-key');
-  const btnAddContact = document.getElementById('btn-add-contact');
-  const contactsListContainer = document.getElementById('contacts-list-container');
-  
-  const btnChat = document.getElementById('btn-chat');
-  const btnCallAudio = document.getElementById('btn-call-audio');
-  const btnCallVideo = document.getElementById('btn-call-video');
-  const btnEndSession = document.getElementById('btn-end-session');
-  
-  const videoContainer = document.getElementById('video-container');
-  const localVideo = document.getElementById('local-video');
-  const remoteVideo = document.getElementById('remote-video');
-  const remoteAudio = document.getElementById('remote-audio');
-  
-  const callControls = document.getElementById('call-controls');
-  const btnToggleMic = document.getElementById('btn-toggle-mic');
-  const btnToggleCam = document.getElementById('btn-toggle-cam');
-  
-  const chatBox = document.getElementById('chat-box');
-  const chatInput = document.getElementById('chat-input');
-  const btnSend = document.getElementById('btn-send');
-  const btnAttach = document.getElementById('btn-attach');
-  const fileInput = document.getElementById('file-input');
-  const btnWipe = document.getElementById('btn-wipe');
+  const contactNameInput = $('contact-name');
+  const contactKeyInput = $('contact-key');
+  const btnAddContact = $('btn-add-contact');
+  const contactsListContainer = $('contacts-list-container');
 
-  const callModal = document.getElementById('call-modal');
-  const callerIdText = document.getElementById('caller-id-text');
-  const btnAccept = document.getElementById('btn-accept');
-  const btnDecline = document.getElementById('btn-decline');
+  const btnChat = $('btn-chat');
+  const btnCallAudio = $('btn-call-audio');
+  const btnCallVideo = $('btn-call-video');
+  const btnEndSession = $('btn-end-session');
 
-  const btnShowQr = document.getElementById('btn-show-qr');
-  const btnScanQr = document.getElementById('btn-scan-qr');
-  const qrModal = document.getElementById('qr-modal');
-  const qrModalTitle = document.getElementById('qr-modal-title');
-  const qrDisplayContainer = document.getElementById('qr-display-container');
-  const qrScannerContainer = document.getElementById('qr-scanner-container');
-  const btnCloseQr = document.getElementById('btn-close-qr');
-  const qrcodeDiv = document.getElementById('qrcode');
-  const qrVideo = document.getElementById('qr-video');
-  const qrCanvas = document.getElementById('qr-canvas');
-  const btnUploadQrImg = document.getElementById('btn-upload-qr-img');
-  const qrFileInput = document.getElementById('qr-file-input');
+  const videoContainer = $('video-container');
+  const localVideo = $('local-video');
+  const remoteVideo = $('remote-video');
+  const remoteAudio = $('remote-audio');
 
-  const paymentModal = document.getElementById('payment-modal');
-  const btnStartCheckout = document.getElementById('btn-start-checkout');
-  const btnClosePaymentModal = document.getElementById('btn-close-payment-modal');
-  const modalDisplayPrice = document.getElementById('modal-display-price');
+  const callControls = $('call-controls');
+  const btnToggleMic = $('btn-toggle-mic');
+  const btnToggleCam = $('btn-toggle-cam');
 
+  const chatBox = $('chat-box');
+  const chatInput = $('chat-input');
+  const btnSend = $('btn-send');
+  const btnAttach = $('btn-attach');
+  const fileInput = $('file-input');
+  const btnWipe = $('btn-wipe');
+
+  const callModal = $('call-modal');
+  const callerIdText = $('caller-id-text');
+  const btnAccept = $('btn-accept');
+  const btnDecline = $('btn-decline');
+
+  const btnShowQr = $('btn-show-qr');
+  const btnScanQr = $('btn-scan-qr');
+  const qrModal = $('qr-modal');
+  const qrModalTitle = $('qr-modal-title');
+  const qrDisplayContainer = $('qr-display-container');
+  const qrScannerContainer = $('qr-scanner-container');
+  const btnCloseQr = $('btn-close-qr');
+  const qrcodeDiv = $('qrcode');
+  const qrVideo = $('qr-video');
+  const qrCanvas = $('qr-canvas');
+  const btnUploadQrImg = $('btn-upload-qr-img');
+  const qrFileInput = $('qr-file-input');
+
+  const paymentModal = $('payment-modal');
+  const btnStartCheckout = $('btn-start-checkout');
+  const btnStartCheckoutYearly = $('btn-start-checkout-yearly'); // optional element
+  const btnClosePaymentModal = $('btn-close-payment-modal');
+  const modalDisplayPrice = $('modal-display-price');
+  const modalDisplayPriceYearly = $('modal-display-price-yearly'); // optional element
+
+  // ------------------------------------------------------------ state
+  const KEY_RE = /^GHOST-[A-Z0-9]{3,16}$/;
   let socket = null;
-  let myIdentity = '';
+  let accountKey = '';      // permanent identity (never changes)
+  let mySecret = '';        // proves ownership of accountKey to the server
+  let myHandle = '';        // optional premium custom handle
   let activeCallTarget = '';
   let isPremiumUser = false;
   let peerConnection = null;
@@ -70,19 +77,25 @@ document.addEventListener('DOMContentLoaded', () => {
   let qrScanAnimation = null;
   let ramContacts = [];
   let reconnectAttempts = 0;
+  let reconnectTimer = null;
+  let pingTimer = null;
+  let suppressReconnect = false;
   let pendingIceCandidates = [];
-  
-  let callState = 'IDLE';
   let pendingSocketQueue = [];
+
+  let callState = 'IDLE';   // IDLE | RINGING | CALLING | CONNECTED
+  let callPeer = '';        // who the current call is with (independent of the selected contact)
+  let callPeerAlias = '';   // the name the peer's messages arrive under
+  let incomingOffer = null;
+  let ringTimeout = null;
+  let rtcConfigCache = null;
+  let rtcConfigAt = 0;
 
   const security = new SecurityGuard();
   const frameCrypto = new FrameCrypto();
 
-  const rtcConfig = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
-    ]
+  const DEFAULT_ICE = {
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }]
   };
 
   const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '8158';
@@ -90,15 +103,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const socketUrl = isLocalBrowser ? 'ws://127.0.0.1:8158' : 'wss://ghost-talk-backend.onrender.com';
 
   const styleInject = document.createElement('style');
-  styleInject.innerHTML = `
+  styleInject.textContent = `
     :root {
-      --bg-deep: #0e1110;
-      --bg-card: #141817;
-      --accent-gold: #c5a059;
-      --accent-gold-hover: #d4af37;
-      --text-main: #e2e8f0;
-      --text-muted: #8892b0;
-      --border-subtle: #232d2a;
+      --bg-deep: #0e1110; --bg-card: #141817; --accent-gold: #c5a059; --accent-gold-hover: #d4af37;
+      --text-main: #e2e8f0; --text-muted: #8892b0; --border-subtle: #232d2a;
     }
     body { background-color: var(--bg-deep) !important; color: var(--text-main) !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important; }
     .contact-card { transition: all 0.2s ease; position: relative; }
@@ -118,343 +126,351 @@ document.addEventListener('DOMContentLoaded', () => {
   `;
   document.head.appendChild(styleInject);
 
-  let savedKey = localStorage.getItem('ghost_identity');
-  if (!savedKey) {
-    savedKey = 'GHOST-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-    localStorage.setItem('ghost_identity', savedKey);
+  // ------------------------------------------------------------ identity
+  function randomId(len, alphabet) {
+    const a = new Uint32Array(len);
+    crypto.getRandomValues(a);
+    return Array.from(a, n => alphabet[n % alphabet.length]).join('');
   }
-  myIdentity = savedKey;
-  if (myIdentityInput) myIdentityInput.value = myIdentity;
-
-  let cachedTier = localStorage.getItem('ghost_tier');
-  let cachedExpiry = localStorage.getItem('ghost_tier_expiry');
-
-  if (cachedTier === 'PREMIUM') {
-    if (cachedExpiry && Date.now() >= parseInt(cachedExpiry)) {
-      isPremiumUser = false;
-      applyUIPremiumState(false);
-      localStorage.removeItem('ghost_tier');
-      localStorage.removeItem('ghost_tier_expiry');
-    } else {
-      isPremiumUser = true;
-      applyUIPremiumState(true);
-    }
-  } else {
-    isPremiumUser = false;
-    applyUIPremiumState(false);
+  function newIdentity() {
+    accountKey = 'GHOST-' + randomId(8, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789');
+    mySecret = randomId(48, 'abcdef0123456789');
+    myHandle = '';
+    localStorage.setItem('ghost_identity', accountKey);
+    localStorage.setItem('ghost_secret', mySecret);
+    localStorage.removeItem('ghost_handle');
   }
+  const displayIdentity = () => myHandle || accountKey;
+  function refreshIdentityUI() { if (myIdentityInput) myIdentityInput.value = displayIdentity(); }
 
+  accountKey = (localStorage.getItem('ghost_identity') || '').toUpperCase();
+  mySecret = localStorage.getItem('ghost_secret') || '';
+  if (!KEY_RE.test(accountKey)) {
+    newIdentity();
+  } else if (mySecret.length < 32) {
+    mySecret = randomId(48, 'abcdef0123456789'); // legacy identity without a secret
+    localStorage.setItem('ghost_secret', mySecret);
+  }
+  myHandle = localStorage.getItem('ghost_handle') || '';
+  refreshIdentityUI();
+
+  // ------------------------------------------------------------ tier UI
+  // The server is the only source of truth; localStorage is just a startup hint for the UI.
   function applyUIPremiumState(premium, expiresAt = null) {
     isPremiumUser = premium;
     if (premium) {
       localStorage.setItem('ghost_tier', 'PREMIUM');
       if (expiresAt) localStorage.setItem('ghost_tier_expiry', expiresAt);
-      else if (!localStorage.getItem('ghost_tier_expiry')) {
-        localStorage.setItem('ghost_tier_expiry', Date.now() + (30 * 24 * 60 * 60 * 1000));
-      }
-      if (tierBadge) {
-        tierBadge.innerText = 'PREMIUM TIER';
-        tierBadge.style.background = '#1a2220';
-        tierBadge.style.color = '#c5a059';
-        tierBadge.style.borderColor = '#c5a059';
-      }
+      if (tierBadge) { tierBadge.innerText = 'PREMIUM TIER'; tierBadge.style.background = '#1a2220'; tierBadge.style.color = '#c5a059'; tierBadge.style.borderColor = '#c5a059'; }
       if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'block';
     } else {
       localStorage.removeItem('ghost_tier');
       localStorage.removeItem('ghost_tier_expiry');
-      if (tierBadge) {
-        tierBadge.innerText = 'FREE TIER';
-        tierBadge.style.background = 'transparent';
-        tierBadge.style.color = '#8892b0';
-        tierBadge.style.borderColor = '#232d2a';
-      }
+      if (tierBadge) { tierBadge.innerText = 'FREE TIER'; tierBadge.style.background = 'transparent'; tierBadge.style.color = '#8892b0'; tierBadge.style.borderColor = '#232d2a'; }
       if (premiumCustomKeyBox) premiumCustomKeyBox.style.display = 'none';
     }
   }
+  {
+    const exp = parseInt(localStorage.getItem('ghost_tier_expiry') || '0', 10);
+    const hint = localStorage.getItem('ghost_tier') === 'PREMIUM' && (!exp || Date.now() < exp);
+    applyUIPremiumState(hint, exp || null);
+  }
 
+  function applyHandle(handle) {
+    myHandle = handle || '';
+    if (myHandle) localStorage.setItem('ghost_handle', myHandle); else localStorage.removeItem('ghost_handle');
+    refreshIdentityUI();
+  }
+
+  // ------------------------------------------------------------ chat log (DOM APIs only, no innerHTML with remote data)
   function logChat(msg) {
     if (!chatBox) return;
     const div = document.createElement('div');
-    div.innerText = msg;
+    div.textContent = msg;
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
   }
 
+  const SAFE_IMAGE_RE = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
   function logFileReceived(senderKey, fileName, fileData, fileType) {
     if (!chatBox) return;
     const div = document.createElement('div');
     div.style.margin = '6px 0';
-    const shortKey = senderKey ? senderKey.substring(0, 8) : 'Peer';
-    const safeName = escapeHTML(fileName);
-    if (fileType && fileType.startsWith('image/')) {
-      div.innerHTML = `<strong>${shortKey} [Image]:</strong> ${safeName}<br><img src="${fileData}" style="max-width: 150px; border-radius: 4px; margin-top: 4px;">`;
+    const shortKey = senderKey ? String(senderKey).substring(0, 8) : 'Peer';
+    const safeName = String(fileName || 'file').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 100);
+    const isImg = typeof fileData === 'string' && SAFE_IMAGE_RE.test(fileData);
+
+    const label = document.createElement('strong');
+    label.textContent = `${shortKey} ${isImg ? '[Image]' : '[File]'}: `;
+    div.appendChild(label);
+
+    if (isImg) {
+      div.append(safeName, document.createElement('br'));
+      const img = document.createElement('img');
+      img.src = fileData;
+      img.style.cssText = 'max-width:150px;border-radius:4px;margin-top:4px;';
+      div.appendChild(img);
+    } else if (typeof fileData === 'string' && fileData.startsWith('data:')) {
+      const a = document.createElement('a');
+      // force a harmless MIME type so nothing is ever rendered/executed
+      a.href = fileData.replace(/^data:[^;,]*/, 'data:application/octet-stream');
+      a.download = safeName;
+      a.style.cssText = 'color:#c5a059;text-decoration:underline;';
+      a.textContent = `Download ${safeName}`;
+      div.appendChild(a);
     } else {
-      div.innerHTML = `<strong>${shortKey} [File]:</strong> <a href="${fileData}" download="${safeName}" style="color: #c5a059; text-decoration: underline;">📁 Download ${safeName}</a>`;
+      div.append(safeName);
     }
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
   }
 
+  // ------------------------------------------------------------ contacts
+  function escapeHTML(str) {
+    return String(str).replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
+  }
   function ensureContact(key, defaultName = 'Peer') {
     if (!key) return;
-    const upperKey = key.toUpperCase();
+    const upperKey = String(key).toUpperCase();
     if (!ramContacts.some(c => c.key === upperKey)) {
       ramContacts.push({ name: defaultName, key: upperKey });
       renderContacts();
     }
   }
+  const isValidContact = key => ramContacts.some(c => c.key === key);
 
-  function isValidContact(key) {
-    return ramContacts.some(c => c.key === key);
-  }
-
+  // ------------------------------------------------------------ websocket
   function safeSend(dataObj) {
     const jsonStr = JSON.stringify(dataObj);
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(jsonStr);
-    } else {
-      pendingSocketQueue.push(jsonStr);
-    }
+    if (socket && socket.readyState === WebSocket.OPEN) socket.send(jsonStr);
+    else if (pendingSocketQueue.length < 100) pendingSocketQueue.push(jsonStr);
   }
-
   function flushSocketQueue() {
-    while (pendingSocketQueue.length > 0 && socket && socket.readyState === WebSocket.OPEN) {
-      const msg = pendingSocketQueue.shift();
-      socket.send(msg);
-    }
+    while (pendingSocketQueue.length > 0 && socket && socket.readyState === WebSocket.OPEN) socket.send(pendingSocketQueue.shift());
+  }
+  function scheduleReconnect() {
+    if (suppressReconnect || reconnectTimer) return;
+    const timeout = Math.min(10000, 1000 * Math.pow(1.5, reconnectAttempts));
+    reconnectAttempts++;
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; initWebSocket(); }, timeout);
   }
 
   function initWebSocket() {
-    socket = new WebSocket(socketUrl);
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
 
-    socket.onopen = () => {
-      statusBar.innerText = 'STATUS: ONLINE | SECURED';
+    const ws = new WebSocket(socketUrl);
+    socket = ws;
+
+    ws.onopen = () => {
+      statusBar.innerText = 'STATUS: ONLINE | ENCRYPTED IN TRANSIT';
       statusBar.classList.remove('offline');
       reconnectAttempts = 0;
-      
-      const currentCachedTier = localStorage.getItem('ghost_tier') || 'FREE';
-      const currentCachedExpiry = localStorage.getItem('ghost_tier_expiry') || '';
-
-      socket.send(JSON.stringify({ 
-        type: 'register', 
-        key: myIdentity, 
-        claimedTier: currentCachedTier,
-        claimedExpiry: currentCachedExpiry
-      }));
-
+      ws.send(JSON.stringify({ type: 'register', key: accountKey, secret: mySecret }));
       flushSocketQueue();
+      clearInterval(pingTimer);
+      pingTimer = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('{"type":"ping"}'); }, 20000);
     };
 
-    socket.onmessage = async (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        handleSignalingMessage(msg);
-      } catch (e) {
-        console.error('Failed to parse incoming WebSocket message', e);
-      }
+    ws.onmessage = event => {
+      try { handleSignalingMessage(JSON.parse(event.data)); }
+      catch (e) { console.error('Bad incoming message', e); }
     };
 
-    socket.onclose = () => {
-      statusBar.innerText = 'STATUS: OFFLINE | RECONNECTING...';
+    ws.onclose = () => {
+      if (socket !== ws) return;
+      clearInterval(pingTimer);
+      statusBar.innerText = suppressReconnect ? 'STATUS: OPEN IN ANOTHER TAB/DEVICE' : 'STATUS: OFFLINE | RECONNECTING...';
       statusBar.classList.add('offline');
-      const timeout = Math.min(10000, 1000 * Math.pow(1.5, reconnectAttempts));
-      reconnectAttempts++;
-      setTimeout(initWebSocket, timeout);
+      scheduleReconnect();
     };
 
-    socket.onerror = () => { 
-      if (socket) socket.close(); 
-    };
+    ws.onerror = () => { try { ws.close(); } catch {} };
   }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || suppressReconnect) return;
+    if (!socket || socket.readyState === WebSocket.CLOSED) { reconnectAttempts = 0; initWebSocket(); }
+    else safeSend({ type: 'get-status' }); // picks up a payment that completed while the tab was in the background
+  });
+
+  // ------------------------------------------------------------ signaling
+  const peerMatches = sk => !!sk && (sk === callPeer || sk === callPeerAlias);
 
   async function handleSignalingMessage(msg) {
     switch (msg.type) {
+      case 'pong': break;
       case 'registered':
         logChat('System: Registered on secure mesh.');
-        if (msg.tier === 'PREMIUM') applyUIPremiumState(true, msg.expiresAt);
+        applyUIPremiumState(msg.tier === 'PREMIUM', msg.expiresAt);
+        applyHandle(msg.handle);
+        break;
+      case 'register-error':
+        if (msg.reason === 'identity-taken') {
+          alert('This identity is already claimed by another device. A new identity has been created for you.');
+          newIdentity(); refreshIdentityUI(); applyUIPremiumState(false);
+          try { socket.close(); } catch {}
+        } else {
+          logChat(`System: ${msg.message || 'Registration failed.'}`);
+        }
+        break;
+      case 'replaced':
+        suppressReconnect = true;
+        logChat('System: Opened on another tab/device. This one is now disconnected.');
         break;
       case 'tier-updated':
         applyUIPremiumState(msg.tier === 'PREMIUM', msg.expiresAt);
-        logChat(`System: Tier updated to ${msg.tier}.`);
+        applyHandle(msg.handle);
+        logChat(`System: Tier updated to ${msg.tier}.${msg.message ? ' ' + msg.message : ''}`);
         break;
       case 'custom-key-success':
-        myIdentity = msg.customKey.startsWith('GHOST-') ? msg.customKey : `GHOST-${msg.customKey}`;
-        localStorage.setItem('ghost_identity', myIdentity);
-        if (myIdentityInput) myIdentityInput.value = myIdentity;
-
-        alert(`✅ Custom Handle Set: ${myIdentity}`);
+        applyHandle(msg.customKey === accountKey ? '' : msg.customKey);
+        alert(`Custom handle set: ${displayIdentity()}`);
         if (customKeyInput) customKeyInput.value = '';
-
-        initWebSocket();
+        break;
+      case 'custom-key-error':
+        alert(msg.message || 'Could not set handle.');
+        break;
+      case 'error':
+        logChat(`System: ${msg.message}`);
+        break;
+      case 'peer-offline':
+        logChat('System: That contact is offline right now.');
+        if (callState === 'CALLING' && peerMatches(msg.targetKey)) endCall(false);
         break;
       case 'text-notify':
         ensureContact(msg.senderKey, 'Peer');
         activeCallTarget = msg.senderKey;
         renderContacts();
         break;
-      case 'offer':
-        if (peerConnection || callState !== 'IDLE') {
+
+      case 'offer': {
+        if (!msg.senderKey || !msg.offer) return;
+        if (callState !== 'IDLE' || peerConnection) {
           safeSend({ type: 'decline', targetKey: msg.senderKey });
           return;
         }
+        callState = 'RINGING';
+        callPeer = msg.senderKey;
+        callPeerAlias = '';
+        pendingIceCandidates = [];   // candidates for THIS call may arrive before Accept; keep them
+        incomingOffer = msg;
         ensureContact(msg.senderKey, 'Caller');
         activeCallTarget = msg.senderKey;
         renderContacts();
-        if (callerIdText) callerIdText.innerText = `Secure Call from ${msg.senderKey} (${msg.hasVideo ? 'Video' : 'Audio'})`;
+        if (callerIdText) callerIdText.textContent = `Secure Call from ${msg.senderKey} (${msg.hasVideo ? 'Video' : 'Audio'})`;
         if (callModal) callModal.style.display = 'flex';
-
-        btnAccept.onclick = async () => {
-          callModal.style.display = 'none';
-          try {
-            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: msg.hasVideo });
-          } catch (err) {
-            alert('Media permission required.');
-            return;
-          }
-          await setupWebRTC(msg.hasVideo);
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.offer));
-          
-          // Flush any pending ICE candidates buffered before remote description was set
-          await processPendingIceCandidates();
-
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
-          safeSend({ type: 'answer', targetKey: activeCallTarget, answer });
-          callState = 'CONNECTED';
-          logChat('System: Call connected.');
-        };
-
-        btnDecline.onclick = () => {
-          callModal.style.display = 'none';
-          safeSend({ type: 'decline', targetKey: msg.senderKey });
-          activeCallTarget = '';
-          callState = 'IDLE';
-          renderContacts();
-        };
+        clearTimeout(ringTimeout);
+        ringTimeout = setTimeout(() => { if (callState === 'RINGING') declineIncoming(); }, 45000);
         break;
+      }
+
       case 'answer':
-        if (peerConnection) {
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.answer));
-          await processPendingIceCandidates();
-          callState = 'CONNECTED';
-          logChat('System: Secure stream established.');
+        if (peerConnection && callState === 'CALLING' && msg.answer) {
+          callPeerAlias = msg.senderKey || '';
+          clearTimeout(ringTimeout);
+          try {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.answer));
+            await processPendingIceCandidates();
+            callState = 'CONNECTED';
+            logChat('System: Secure stream established.');
+          } catch (e) { console.error(e); endCall(true); }
         }
         break;
+
       case 'ice-candidate':
-        if (peerConnection && msg.candidate) {
-          if (peerConnection.remoteDescription && peerConnection.remoteDescription.type) {
-            try { 
-              await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate)); 
-            } catch (e) {
-              console.error('Error adding received ICE candidate', e);
-            }
-          } else {
-            pendingIceCandidates.push(msg.candidate);
-          }
+        if (!msg.candidate || !peerMatches(msg.senderKey)) break;
+        if (peerConnection && peerConnection.remoteDescription && peerConnection.remoteDescription.type) {
+          try { await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate)); }
+          catch (e) { console.error('Error adding ICE candidate', e); }
+        } else {
+          pendingIceCandidates.push(msg.candidate);
         }
         break;
+
       case 'chat':
         ensureContact(msg.senderKey, 'Peer');
         activeCallTarget = msg.senderKey;
         renderContacts();
-        logChat(`${msg.senderKey.substring(0, 8)}: ${escapeHTML(msg.text)}`);
+        logChat(`${String(msg.senderKey).substring(0, 8)}: ${msg.text}`);
         break;
+
       case 'file-transfer':
         ensureContact(msg.senderKey, 'Peer');
         activeCallTarget = msg.senderKey;
         renderContacts();
         logFileReceived(msg.senderKey, msg.fileName, msg.fileData, msg.fileType);
         break;
+
       case 'decline':
-        alert('Call rejected.');
-        endCall(false);
+        if (callState === 'CALLING' || peerMatches(msg.senderKey)) {
+          alert('Call rejected.');
+          endCall(false);
+        }
         break;
+
       case 'end-session':
-        if (callModal) callModal.style.display = 'none';
-        logChat('System: Session terminated.');
-        endCall(false);
+        // Server-originated kicks have no senderKey; peer-originated ones must match the current call.
+        if (!msg.senderKey || callState === 'IDLE' || peerMatches(msg.senderKey)) {
+          logChat('System: Session terminated.');
+          endCall(false, true);
+        }
         break;
     }
+  }
+
+  // ------------------------------------------------------------ WebRTC
+  async function getRtcConfig() {
+    if (rtcConfigCache && Date.now() - rtcConfigAt < 10 * 60 * 1000) return rtcConfigCache;
+    try {
+      const res = await fetch(`${apiBase}/api/ice-servers`, { signal: AbortSignal.timeout(4000) });
+      const data = await res.json();
+      if (Array.isArray(data.iceServers) && data.iceServers.length) {
+        rtcConfigCache = { iceServers: data.iceServers };
+        rtcConfigAt = Date.now();
+        return rtcConfigCache;
+      }
+    } catch (e) { /* fall back to public STUN */ }
+    return DEFAULT_ICE;
   }
 
   async function processPendingIceCandidates() {
-    while (pendingIceCandidates.length > 0 && peerConnection) {
+    while (pendingIceCandidates.length > 0 && peerConnection && peerConnection.remoteDescription) {
       const candidate = pendingIceCandidates.shift();
-      try {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (e) {
-        console.error('Error adding queued ICE candidate', e);
-      }
+      try { await peerConnection.addIceCandidate(new RTCIceCandidate(candidate)); }
+      catch (e) { console.error('Error adding queued ICE candidate', e); }
     }
-  }
-
-  async function startCall(wantVideo) {
-    if (callState !== 'IDLE') {
-      alert('Call already in progress.');
-      return;
-    }
-    if (!activeCallTarget || !isValidContact(activeCallTarget)) {
-      alert('Select a valid contact first.');
-      return;
-    }
-    if (wantVideo && !isPremiumUser) {
-      alert('Video calls require Premium Tier.');
-      return;
-    }
-
-    try {
-      localStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: wantVideo ? { width: { ideal: 640 }, height: { ideal: 480 } } : false
-      });
-    } catch (err) {
-      alert('Microphone/Camera access required.');
-      return;
-    }
-
-    callState = 'CALLING';
-    await setupWebRTC(wantVideo);
-
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-
-    safeSend({
-      type: 'offer',
-      targetKey: activeCallTarget,
-      offer,
-      hasVideo: wantVideo
-    });
-
-    logChat(`System: Calling ${activeCallTarget} ...`);
   }
 
   async function setupWebRTC(wantVideo) {
-    if (peerConnection) {
-      peerConnection.close();
-      peerConnection = null;
-    }
-    pendingIceCandidates = [];
+    if (peerConnection) { peerConnection.close(); peerConnection = null; }
+    // NOTE: pendingIceCandidates is intentionally NOT cleared here (it may hold early candidates).
 
-    peerConnection = new RTCPeerConnection(rtcConfig);
+    peerConnection = new RTCPeerConnection(await getRtcConfig());
 
-    peerConnection.onicecandidate = (e) => {
-      if (e.candidate && activeCallTarget) {
-        safeSend({ type: 'ice-candidate', targetKey: activeCallTarget, candidate: e.candidate });
+    peerConnection.onicecandidate = e => {
+      if (e.candidate && callPeer) safeSend({ type: 'ice-candidate', targetKey: callPeer, candidate: e.candidate });
+    };
+
+    peerConnection.onconnectionstatechange = () => {
+      if (!peerConnection) return;
+      if (peerConnection.connectionState === 'failed') {
+        logChat('System: Connection failed (network may block direct calls).');
+        endCall(true);
       }
     };
 
-    peerConnection.ontrack = (e) => {
-      if (e.streams && e.streams[0]) {
-        if (e.track.kind === 'video' && remoteVideo) {
-          remoteVideo.srcObject = e.streams[0];
-          remoteVideo.play().catch(() => {});
-          videoContainer.style.display = 'block';
-        } else if (e.track.kind === 'audio' && remoteAudio) {
-          remoteAudio.srcObject = e.streams[0];
-          remoteAudio.volume = 1.0;
-          remoteAudio.muted = false;
-          remoteAudio.play().catch(() => {});
-        }
+    peerConnection.ontrack = e => {
+      if (!e.streams || !e.streams[0]) return;
+      if (e.track.kind === 'video' && remoteVideo) {
+        remoteVideo.srcObject = e.streams[0];
+        remoteVideo.play().catch(() => {});
+        videoContainer.style.display = 'block';
+      } else if (e.track.kind === 'audio' && remoteAudio) {
+        remoteAudio.srcObject = e.streams[0];
+        remoteAudio.volume = 1.0;
+        remoteAudio.muted = false;
+        remoteAudio.play().catch(() => {});
       }
     };
 
@@ -469,41 +485,128 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function endCall(notifyPeer = true) {
-    if (notifyPeer && activeCallTarget) {
-      safeSend({ type: 'end-session', targetKey: activeCallTarget });
+  async function startCall(wantVideo) {
+    if (callState !== 'IDLE') { alert('Call already in progress.'); return; }
+    if (!activeCallTarget || !isValidContact(activeCallTarget)) { alert('Select a valid contact first.'); return; }
+    if (wantVideo && !isPremiumUser) { alert('Video calls require Premium Tier.'); return; }
+
+    callState = 'CALLING';                 // claim the slot before any await
+    callPeer = activeCallTarget;
+    callPeerAlias = '';
+    pendingIceCandidates = [];
+
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: wantVideo ? { width: { ideal: 640 }, height: { ideal: 480 } } : false
+      });
+    } catch (err) {
+      resetCallState();
+      alert('Microphone/Camera access required.');
+      return;
     }
+    if (callState !== 'CALLING') { stopLocalMedia(); return; }
+
+    try {
+      await setupWebRTC(wantVideo);
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      safeSend({ type: 'offer', targetKey: callPeer, offer: { type: offer.type, sdp: offer.sdp }, hasVideo: wantVideo });
+      logChat(`System: Calling ${callPeer} ...`);
+      clearTimeout(ringTimeout);
+      ringTimeout = setTimeout(() => {
+        if (callState === 'CALLING') { logChat('System: No answer.'); endCall(true); }
+      }, 45000);
+    } catch (e) {
+      console.error(e);
+      endCall(false);
+      alert('Could not start the call.');
+    }
+  }
+
+  async function acceptIncoming() {
+    const msg = incomingOffer;
+    if (!msg || callState !== 'RINGING') return;
+    clearTimeout(ringTimeout);
     if (callModal) callModal.style.display = 'none';
 
-    if (localStream) {
-      localStream.getTracks().forEach(t => t.stop());
-      localStream = null;
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: msg.hasVideo ? { width: { ideal: 640 }, height: { ideal: 480 } } : false
+      });
+    } catch (err) {
+      alert('Media permission required.');
+      safeSend({ type: 'decline', targetKey: callPeer });
+      resetCallState();
+      return;
     }
-    if (peerConnection) {
-      peerConnection.close();
-      peerConnection = null;
+    if (callState !== 'RINGING') { stopLocalMedia(); return; } // caller hung up while we were asking permission
+
+    try {
+      await setupWebRTC(msg.hasVideo);
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.offer));
+      await processPendingIceCandidates();
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      safeSend({ type: 'answer', targetKey: callPeer, answer: { type: answer.type, sdp: answer.sdp } });
+      callPeerAlias = msg.senderKey;
+      callState = 'CONNECTED';
+      incomingOffer = null;
+      logChat('System: Call connected.');
+    } catch (e) {
+      console.error(e);
+      endCall(true);
     }
+  }
+
+  function declineIncoming() {
+    clearTimeout(ringTimeout);
+    if (callModal) callModal.style.display = 'none';
+    if (callPeer) safeSend({ type: 'decline', targetKey: callPeer });
+    resetCallState();
+    renderContacts();
+  }
+
+  function stopLocalMedia() {
+    if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+  }
+  function resetCallState() {
+    clearTimeout(ringTimeout);
+    stopLocalMedia();
+    callState = 'IDLE';
+    callPeer = '';
+    callPeerAlias = '';
+    incomingOffer = null;
+    pendingIceCandidates = [];
+    micMuted = false;
+    camOff = false;
+  }
+
+  function endCall(notifyPeer = true, clearChat = false) {
+    const peer = callPeer || activeCallTarget;
+    if (notifyPeer && peer) safeSend({ type: 'end-session', targetKey: peer });
+    if (callModal) callModal.style.display = 'none';
+
+    if (peerConnection) { peerConnection.onconnectionstatechange = null; peerConnection.close(); peerConnection = null; }
+    resetCallState();
     if (localVideo) localVideo.srcObject = null;
     if (remoteVideo) remoteVideo.srcObject = null;
     if (remoteAudio) remoteAudio.srcObject = null;
 
     videoContainer.style.display = 'none';
     callControls.style.display = 'none';
-    chatBox.innerHTML = '';
-    chatInput.value = '';
-
-    callState = 'IDLE';
-    micMuted = false;
-    camOff = false;
-    pendingIceCandidates = [];
+    if (clearChat) { chatBox.innerHTML = ''; chatInput.value = ''; }
     if (btnToggleMic) btnToggleMic.innerText = '🎙️ Mic On';
     if (btnToggleCam) btnToggleCam.innerText = '📹 Cam On';
-    logChat('System: Call ended. RAM cleared.');
+    logChat(clearChat ? 'System: Session ended. Chat cleared.' : 'System: Call ended.');
   }
 
+  btnAccept.onclick = acceptIncoming;
+  btnDecline.onclick = declineIncoming;
   btnCallAudio.onclick = () => startCall(false);
   btnCallVideo.onclick = () => startCall(true);
-  btnEndSession.onclick = () => endCall(true);
+  btnEndSession.onclick = () => endCall(true, true);
 
   if (btnToggleMic) {
     btnToggleMic.onclick = () => {
@@ -514,7 +617,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     };
   }
-
   if (btnToggleCam) {
     btnToggleCam.onclick = () => {
       if (localStream && localStream.getVideoTracks().length > 0) {
@@ -525,55 +627,52 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  // ------------------------------------------------------------ chat + files
   btnChat.onclick = () => {
     if (!activeCallTarget || !isValidContact(activeCallTarget)) { alert('Select a contact.'); return; }
     safeSend({ type: 'text-notify', targetKey: activeCallTarget });
-    logChat(`System: Chat session ready.`);
+    logChat('System: Chat session ready.');
   };
 
   btnSend.onclick = () => {
     const text = chatInput.value.trim();
     if (!text || !activeCallTarget || !isValidContact(activeCallTarget)) return;
-    safeSend({ type: 'chat', targetKey: activeCallTarget, text });
-    logChat(`Me: ${escapeHTML(text)}`);
+    safeSend({ type: 'chat', targetKey: activeCallTarget, text: text.slice(0, 4000) });
+    logChat(`Me: ${text}`);
     chatInput.value = '';
   };
-
-  chatInput.onkeypress = (e) => { if (e.key === 'Enter') btnSend.click(); };
+  chatInput.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); btnSend.click(); } };
 
   if (btnAttach && fileInput) {
     btnAttach.onclick = () => {
-      if (!isPremiumUser) { alert('Premium Feature required.'); return; }
-      if (!activeCallTarget) { alert('Select contact first.'); return; }
+      if (!isPremiumUser) { alert('Premium feature required.'); return; }
+      if (!activeCallTarget || !isValidContact(activeCallTarget)) { alert('Select a contact first.'); return; }
       fileInput.click();
     };
-
-    fileInput.onchange = (e) => {
+    fileInput.onchange = e => {
       const file = e.target.files[0];
       if (!file) return;
-      if (file.size > 5 * 1024 * 1024) {
-        alert('⚠️ File size exceeds 5MB RAM ceiling.');
-        fileInput.value = '';
-        return;
-      }
+      if (file.size > 5 * 1024 * 1024) { alert('File size exceeds the 5MB limit.'); fileInput.value = ''; return; }
+      const target = activeCallTarget;
       const reader = new FileReader();
-      reader.onload = (evt) => {
-        safeSend({
-          type: 'file-transfer', targetKey: activeCallTarget,
-          fileName: file.name, fileType: file.type, fileData: evt.target.result
-        });
-        logChat(`Me [File]: ${escapeHTML(file.name)}`);
+      reader.onload = evt => {
+        safeSend({ type: 'file-transfer', targetKey: target, fileName: file.name, fileType: file.type, fileData: evt.target.result });
+        logChat(`Me [File]: ${file.name}`);
         fileInput.value = '';
       };
       reader.readAsDataURL(file);
     };
   }
 
+  // ------------------------------------------------------------ contacts UI
   btnAddContact.onclick = () => {
-    const name = contactNameInput.value.trim();
+    const name = contactNameInput.value.trim().slice(0, 16);
     let key = contactKeyInput.value.trim().toUpperCase();
-    if (!name || !key) { alert('Enter Name and Key.'); return; }
+    if (!name || !key) { alert('Enter name and key.'); return; }
     if (!key.startsWith('GHOST-')) key = 'GHOST-' + key;
+    if (!KEY_RE.test(key)) { alert('Invalid key format.'); return; }
+    if (key === accountKey || key === myHandle) { alert('That is your own key.'); return; }
+    if (isValidContact(key)) { alert('Contact already added.'); return; }
     ramContacts.push({ name, key });
     contactNameInput.value = '';
     contactKeyInput.value = '';
@@ -583,61 +682,42 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderContacts() {
     contactsListContainer.innerHTML = '';
     if (ramContacts.length === 0) {
-      contactsListContainer.innerHTML = '<div style="font-size: 11px; color: var(--text-muted); padding: 8px; text-align: center;">No active contacts.</div>';
+      contactsListContainer.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px;text-align:center;">No active contacts.</div>';
       return;
     }
-
     ramContacts.forEach((c, idx) => {
       const isSelected = activeCallTarget === c.key;
       const card = document.createElement('div');
       card.className = `contact-card ${isSelected ? 'selected' : ''}`;
-      card.style.display = 'flex';
-      card.style.alignItems = 'center';
-      card.style.justifyContent = 'space-between';
-      card.style.padding = '8px';
-      card.style.marginBottom = '6px';
-      card.style.background = isSelected ? '#1a2220' : '#141817';
-      card.style.borderRadius = '4px';
-      card.style.border = isSelected ? '1px solid var(--accent-gold)' : '1px solid #232d2a';
-      
+      card.style.cssText = `display:flex;align-items:center;justify-content:space-between;padding:8px;margin-bottom:6px;border-radius:4px;background:${isSelected ? '#1a2220' : '#141817'};border:${isSelected ? '1px solid var(--accent-gold)' : '1px solid #232d2a'};`;
+
       const infoDiv = document.createElement('div');
-      infoDiv.style.flexGrow = '1';
-      infoDiv.style.cursor = 'pointer';
-      infoDiv.innerHTML = `<div style="font-weight:600; color:#e2e8f0;">${escapeHTML(c.name)}</div><div style="font-size:11px; color:#8892b0;">${escapeHTML(c.key)}</div>`;
-      
-      infoDiv.onclick = () => {
-        activeCallTarget = c.key;
-        renderContacts();
-      };
+      infoDiv.style.cssText = 'flex-grow:1;cursor:pointer;';
+      infoDiv.innerHTML = `<div style="font-weight:600;color:#e2e8f0;">${escapeHTML(c.name)}</div><div style="font-size:11px;color:#8892b0;">${escapeHTML(c.key)}</div>`;
+      infoDiv.onclick = () => { activeCallTarget = c.key; renderContacts(); };
 
       const menuContainer = document.createElement('div');
       menuContainer.className = 'menu-container';
-
       const dotBtn = document.createElement('button');
       dotBtn.className = 'dot-btn';
-      dotBtn.innerText = '⋮';
+      dotBtn.textContent = '⋮';
       dotBtn.title = 'Options';
-
       const dropdownMenu = document.createElement('div');
       dropdownMenu.className = 'dropdown-menu';
 
       const renameItem = document.createElement('button');
       renameItem.className = 'dropdown-item';
-      renameItem.innerText = '✏️ Rename';
-      renameItem.onclick = (e) => {
+      renameItem.textContent = '✏️ Rename';
+      renameItem.onclick = e => {
         e.stopPropagation();
         dropdownMenu.classList.remove('show');
         const newName = prompt(`Rename contact ${c.key}:`, c.name);
-        if (newName && newName.trim().length > 0) {
-          ramContacts[idx].name = newName.trim().substring(0, 16);
-          renderContacts();
-        }
+        if (newName && newName.trim().length > 0) { ramContacts[idx].name = newName.trim().substring(0, 16); renderContacts(); }
       };
-
       const deleteItem = document.createElement('button');
       deleteItem.className = 'dropdown-item';
-      deleteItem.innerText = '🗑️ Delete';
-      deleteItem.onclick = (e) => {
+      deleteItem.textContent = '🗑️ Delete';
+      deleteItem.onclick = e => {
         e.stopPropagation();
         dropdownMenu.classList.remove('show');
         if (confirm(`Delete contact ${c.name}?`)) {
@@ -646,58 +726,66 @@ document.addEventListener('DOMContentLoaded', () => {
           renderContacts();
         }
       };
-
-      dotBtn.onclick = (e) => {
+      dotBtn.onclick = e => {
         e.stopPropagation();
         document.querySelectorAll('.dropdown-menu').forEach(m => { if (m !== dropdownMenu) m.classList.remove('show'); });
         dropdownMenu.classList.toggle('show');
       };
 
-      dropdownMenu.appendChild(renameItem);
-      dropdownMenu.appendChild(deleteItem);
-      menuContainer.appendChild(dotBtn);
-      menuContainer.appendChild(dropdownMenu);
-
-      card.appendChild(infoDiv);
-      card.appendChild(menuContainer);
+      dropdownMenu.append(renameItem, deleteItem);
+      menuContainer.append(dotBtn, dropdownMenu);
+      card.append(infoDiv, menuContainer);
       contactsListContainer.appendChild(card);
     });
   }
-
   document.addEventListener('click', () => {
     document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('show'));
   });
 
+  // ------------------------------------------------------------ payments
   tierBadge.onclick = async () => {
-    if (isPremiumUser) { alert('✨ Premium active.'); return; }
+    if (isPremiumUser) {
+      const exp = parseInt(localStorage.getItem('ghost_tier_expiry') || '0', 10);
+      alert(exp ? `Premium active until ${new Date(exp).toLocaleDateString()}.` : 'Premium active.');
+      return;
+    }
     try {
       const res = await fetch(`${apiBase}/api/payment-info`);
       const data = await res.json();
       if (modalDisplayPrice) modalDisplayPrice.innerText = `$${data.pricing.monthly}`;
-    } catch (e) {}
+      if (modalDisplayPriceYearly) modalDisplayPriceYearly.innerText = `$${data.pricing.yearly}`;
+    } catch (e) { /* show modal anyway */ }
     if (paymentModal) paymentModal.style.display = 'flex';
   };
-
   if (btnClosePaymentModal) btnClosePaymentModal.onclick = () => { if (paymentModal) paymentModal.style.display = 'none'; };
 
-  if (btnStartCheckout) {
-    btnStartCheckout.onclick = async () => {
-      btnStartCheckout.innerText = 'Initializing...';
-      btnStartCheckout.disabled = true;
-      try {
-        const response = await fetch(`${apiBase}/api/create-payment`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userKey: myIdentity, planType: 'monthly' })
-        });
-        const data = await response.json();
-        if (data.success && data.invoiceUrl) {
-          if (paymentModal) paymentModal.style.display = 'none';
-          window.open(data.invoiceUrl, '_blank');
-        } else { alert('Gateway Error.'); }
-      } catch (err) { alert('Connection error.'); }
-      finally { btnStartCheckout.innerText = 'Proceed to Secure Checkout'; btnStartCheckout.disabled = false; }
-    };
+  async function startCheckout(planType, btn) {
+    const original = btn.innerText;
+    btn.innerText = 'Initializing...';
+    btn.disabled = true;
+    try {
+      const response = await fetch(`${apiBase}/api/create-payment`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userKey: accountKey, planType })
+      });
+      const data = await response.json();
+      if (data.success && data.invoiceUrl) {
+        if (paymentModal) paymentModal.style.display = 'none';
+        const win = window.open(data.invoiceUrl, '_blank');
+        if (!win) window.location.href = data.invoiceUrl; // popup blocked (common on mobile)
+        logChat('System: Complete the payment in the new tab. Premium activates automatically.');
+      } else {
+        alert(data.error ? `Gateway error: ${data.error}` : 'Gateway error.');
+      }
+    } catch (err) {
+      alert('Connection error.');
+    } finally {
+      btn.innerText = original;
+      btn.disabled = false;
+    }
   }
+  if (btnStartCheckout) btnStartCheckout.onclick = () => startCheckout('monthly', btnStartCheckout);
+  if (btnStartCheckoutYearly) btnStartCheckoutYearly.onclick = () => startCheckout('yearly', btnStartCheckoutYearly);
 
   if (btnSaveCustomKey) {
     btnSaveCustomKey.onclick = () => {
@@ -708,16 +796,26 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  // ------------------------------------------------------------ QR
+  function acceptScannedKey(raw) {
+    let scannedKey = String(raw || '').trim().toUpperCase();
+    if (!scannedKey.startsWith('GHOST-')) scannedKey = 'GHOST-' + scannedKey;
+    if (!KEY_RE.test(scannedKey)) return false;
+    if (contactKeyInput) contactKeyInput.value = scannedKey;
+    closeQrModal();
+    alert(`Scanned key: ${scannedKey}`);
+    return true;
+  }
+
   if (btnShowQr) {
     btnShowQr.onclick = () => {
-      if (!myIdentity) return;
       if (qrModalTitle) qrModalTitle.innerText = 'My Identity QR';
       if (qrDisplayContainer) qrDisplayContainer.style.display = 'inline-block';
       if (qrScannerContainer) qrScannerContainer.style.display = 'none';
       if (qrcodeDiv) {
         qrcodeDiv.innerHTML = '';
         if (window.QRCode) {
-          new QRCode(qrcodeDiv, { text: myIdentity.toUpperCase(), width: 180, height: 180, colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
+          new QRCode(qrcodeDiv, { text: displayIdentity().toUpperCase(), width: 180, height: 180, colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
         }
       }
       if (qrModal) qrModal.style.display = 'flex';
@@ -730,78 +828,57 @@ document.addEventListener('DOMContentLoaded', () => {
       if (qrDisplayContainer) qrDisplayContainer.style.display = 'none';
       if (qrScannerContainer) qrScannerContainer.style.display = 'block';
       if (qrModal) qrModal.style.display = 'flex';
-
       try {
-        qrCameraStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } }
-        });
+        qrCameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
         if (qrVideo) {
           qrVideo.srcObject = qrCameraStream;
           qrVideo.setAttribute('playsinline', true);
           await qrVideo.play();
         }
-        requestAnimationFrame(scanQrFrame);
+        qrScanAnimation = requestAnimationFrame(scanQrFrame);
       } catch (err) {
-        alert('❌ Camera unavailable or permissions denied.');
+        alert('Camera unavailable or permission denied.');
         closeQrModal();
       }
     };
   }
 
   function scanQrFrame() {
-    if (!qrCameraStream || !qrVideo || qrVideo.readyState !== qrVideo.HAVE_ENOUGH_DATA) {
+    if (!qrCameraStream || !qrVideo) return;
+    if (qrVideo.readyState !== qrVideo.HAVE_ENOUGH_DATA || !qrCanvas) {
       qrScanAnimation = requestAnimationFrame(scanQrFrame);
       return;
     }
-
-    if (!qrCanvas) return;
-    const ctx = qrCanvas.getContext('2d');
+    const ctx = qrCanvas.getContext('2d', { willReadFrequently: true });
     qrCanvas.width = qrVideo.videoWidth;
     qrCanvas.height = qrVideo.videoHeight;
     ctx.drawImage(qrVideo, 0, 0, qrCanvas.width, qrCanvas.height);
-
-    const imageData = ctx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
     if (window.jsQR) {
+      const imageData = ctx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
       const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-      if (code && code.data) {
-        let scannedKey = code.data.trim().toUpperCase();
-        if (!scannedKey.startsWith('GHOST-')) scannedKey = 'GHOST-' + scannedKey;
-        if (contactKeyInput) contactKeyInput.value = scannedKey;
-        closeQrModal();
-        alert(`✅ Scanned Key: ${scannedKey}`);
-        return;
-      }
+      if (code && code.data && acceptScannedKey(code.data)) return;
     }
     qrScanAnimation = requestAnimationFrame(scanQrFrame);
   }
 
   if (btnUploadQrImg && qrFileInput) {
     btnUploadQrImg.onclick = () => qrFileInput.click();
-    qrFileInput.onchange = (e) => {
+    qrFileInput.onchange = e => {
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = event => {
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
           canvas.width = img.width;
           canvas.height = img.height;
           ctx.drawImage(img, 0, 0);
+          if (!window.jsQR) return;
           const imageData = ctx.getImageData(0, 0, img.width, img.height);
-          if (window.jsQR) {
-            const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-            if (code && code.data) {
-              let scannedKey = code.data.trim().toUpperCase();
-              if (!scannedKey.startsWith('GHOST-')) scannedKey = 'GHOST-' + scannedKey;
-              if (contactKeyInput) contactKeyInput.value = scannedKey;
-              closeQrModal();
-              alert(`✅ Scanned Key: ${scannedKey}`);
-            } else {
-              alert('❌ No valid QR code detected in image.');
-            }
-          }
+          const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+          if (!code || !code.data || !acceptScannedKey(code.data)) alert('No valid Ghost Talk QR code found in image.');
         };
         img.src = event.target.result;
       };
@@ -814,25 +891,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (qrScanAnimation) { cancelAnimationFrame(qrScanAnimation); qrScanAnimation = null; }
     if (qrCameraStream) { qrCameraStream.getTracks().forEach(t => t.stop()); qrCameraStream = null; }
   }
-
   function closeQrModal() {
     stopQrCamera();
     if (qrModal) qrModal.style.display = 'none';
   }
-
   if (btnCloseQr) btnCloseQr.onclick = closeQrModal;
 
+  // ------------------------------------------------------------ wipe
   btnWipe.onclick = () => {
-    endCall(true);
+    endCall(true, true);
     ramContacts = [];
     activeCallTarget = '';
     renderContacts();
-    logChat('System: Complete RAM state erased.');
+    logChat('System: Contacts and chat erased from memory.');
   };
-
-  function escapeHTML(str) {
-    return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
-  }
 
   renderContacts();
   initWebSocket();

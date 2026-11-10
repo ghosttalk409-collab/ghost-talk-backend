@@ -70,6 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let qrScanAnimation = null;
   let ramContacts = [];
   let reconnectAttempts = 0;
+  let pendingIceCandidates = [];
   
   let callState = 'IDLE';
   let pendingSocketQueue = [];
@@ -84,12 +85,10 @@ document.addEventListener('DOMContentLoaded', () => {
     ]
   };
 
-  // --- DYNAMIC API BASE & WEBSOCKET CONFIG ---
   const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '8158';
   const apiBase = isLocalBrowser ? 'http://127.0.0.1:8158' : 'https://ghost-talk-backend.onrender.com';
   const socketUrl = isLocalBrowser ? 'ws://127.0.0.1:8158' : 'wss://ghost-talk-backend.onrender.com';
 
-  // --- OLD MONEY MATTE DARK & GOLD THEME ---
   const styleInject = document.createElement('style');
   styleInject.innerHTML = `
     :root {
@@ -104,12 +103,11 @@ document.addEventListener('DOMContentLoaded', () => {
     body { background-color: var(--bg-deep) !important; color: var(--text-main) !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important; }
     .contact-card { transition: all 0.2s ease; position: relative; }
     .contact-card.selected { border-color: var(--accent-gold) !important; background: #1a2220 !important; box-shadow: inset 0 0 0 1px var(--accent-gold); }
-    button, .btn { background: #1a2220 !important; color: var(--accent-gold) !important; border: 1px solid var(--accent-gold) !important; border-radius: 4px !important; transition: all 0.3s ease; }
+    button, .btn { background: #1a2220 !important; color: var(--accent-gold) !important; border: 1px solid var(--accent-gold) !important; border-radius: 4px !important; transition: all 0.3s ease; cursor: pointer; }
     button:hover { background: var(--accent-gold) !important; color: #000 !important; }
-    #tier-badge { background: #1a2220 !important; color: var(--accent-gold) !important; border: 1px solid var(--accent-gold) !important; font-weight: 600; letter-spacing: 1px; }
-    input, select, textarea { background: #0b0e0d !important; color: var(--text-main) !important; border: 1px solid #232d2a !important; border-radius: 4px !important; }
+    #tier-badge { background: #1a2220 !important; color: var(--accent-gold) !important; border: 1px solid var(--accent-gold) !important; font-weight: 600; letter-spacing: 1px; cursor: pointer; }
+    input, select, textarea { background: #0b0e0d !important; color: var(--text-main) !important; border: 1px solid #232d2a !important; border-radius: 4px !important; padding: 6px; }
     input:focus { border-color: var(--accent-gold) !important; outline: none !important; }
-    
     .menu-container { position: relative; display: inline-block; }
     .dot-btn { background: transparent !important; border: none !important; color: var(--text-muted) !important; font-size: 16px; cursor: pointer; padding: 4px 8px; }
     .dot-btn:hover { color: var(--accent-gold) !important; background: transparent !important; }
@@ -251,7 +249,9 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const msg = JSON.parse(event.data);
         handleSignalingMessage(msg);
-      } catch (e) {}
+      } catch (e) {
+        console.error('Failed to parse incoming WebSocket message', e);
+      }
     };
 
     socket.onclose = () => {
@@ -262,7 +262,9 @@ document.addEventListener('DOMContentLoaded', () => {
       setTimeout(initWebSocket, timeout);
     };
 
-    socket.onerror = () => { socket.close(); };
+    socket.onerror = () => { 
+      if (socket) socket.close(); 
+    };
   }
 
   async function handleSignalingMessage(msg) {
@@ -311,6 +313,10 @@ document.addEventListener('DOMContentLoaded', () => {
           }
           await setupWebRTC(msg.hasVideo);
           await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.offer));
+          
+          // Flush any pending ICE candidates buffered before remote description was set
+          await processPendingIceCandidates();
+
           const answer = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(answer);
           safeSend({ type: 'answer', targetKey: activeCallTarget, answer });
@@ -329,13 +335,22 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'answer':
         if (peerConnection) {
           await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.answer));
+          await processPendingIceCandidates();
           callState = 'CONNECTED';
           logChat('System: Secure stream established.');
         }
         break;
       case 'ice-candidate':
         if (peerConnection && msg.candidate) {
-          try { await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch (e) {}
+          if (peerConnection.remoteDescription && peerConnection.remoteDescription.type) {
+            try { 
+              await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate)); 
+            } catch (e) {
+              console.error('Error adding received ICE candidate', e);
+            }
+          } else {
+            pendingIceCandidates.push(msg.candidate);
+          }
         }
         break;
       case 'chat':
@@ -359,6 +374,17 @@ document.addEventListener('DOMContentLoaded', () => {
         logChat('System: Session terminated.');
         endCall(false);
         break;
+    }
+  }
+
+  async function processPendingIceCandidates() {
+    while (pendingIceCandidates.length > 0 && peerConnection) {
+      const candidate = pendingIceCandidates.shift();
+      try {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.error('Error adding queued ICE candidate', e);
+      }
     }
   }
 
@@ -403,7 +429,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function setupWebRTC(wantVideo) {
-    if (peerConnection) peerConnection.close();
+    if (peerConnection) {
+      peerConnection.close();
+      peerConnection = null;
+    }
+    pendingIceCandidates = [];
 
     peerConnection = new RTCPeerConnection(rtcConfig);
 
@@ -465,6 +495,7 @@ document.addEventListener('DOMContentLoaded', () => {
     callState = 'IDLE';
     micMuted = false;
     camOff = false;
+    pendingIceCandidates = [];
     if (btnToggleMic) btnToggleMic.innerText = '🎙️ Mic On';
     if (btnToggleCam) btnToggleCam.innerText = '📹 Cam On';
     logChat('System: Call ended. RAM cleared.');

@@ -51,11 +51,11 @@ const wss = new WebSocketServer({
 });
 
 // --- SCALABLE IN-MEMORY MAPPINGS & REGISTRIES ---
-const clients = new Map();         // Key/Handle (Upper) -> WebSocket instance
-const wsToKey = new Map();         // WebSocket instance -> Key (Upper)
-const clientTiers = new Map();     // Key (Upper) -> 'FREE' | 'PREMIUM'
-const clientExpirations = new Map(); // Key (Upper) -> Timestamp
-const customHandles = new Map();   // Handle (Upper) -> Owner Base Key (Upper)
+const clients = new Map();         
+const wsToKey = new Map();         
+const clientTiers = new Map();     
+const clientExpirations = new Map(); 
+const customHandles = new Map();   
 let adminWs = null;
 
 const TIERS_FILE = path.join(__dirname, 'tiers.json');
@@ -81,7 +81,9 @@ function loadPersistedData() {
         }
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error('Error loading persisted tiers:', e);
+  }
 }
 
 function savePersistedData() {
@@ -101,7 +103,9 @@ function savePersistedData() {
       }
     });
     fs.writeFileSync(TIERS_FILE, JSON.stringify(data, null, 2));
-  } catch (e) {}
+  } catch (e) {
+    console.error('Error saving persisted tiers:', e);
+  }
 }
 
 function loadRegistryData() {
@@ -130,7 +134,9 @@ function saveRegistryUser(userKey, tier) {
       });
     }
     fs.writeFileSync(REGISTRY_FILE, JSON.stringify(data, null, 2));
-  } catch (e) {}
+  } catch (e) {
+    console.error('Error saving registry user:', e);
+  }
 }
 
 function loadCampaigns() {
@@ -165,7 +171,7 @@ function grantPremiumWithExpiry(userKey, durationDays = 30) {
   saveRegistryUser(upperKey, 'PREMIUM');
 
   const ws = clients.get(upperKey);
-  if (ws && ws.readyState === 1) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ 
       type: 'tier-updated', 
       tier: 'PREMIUM',
@@ -192,7 +198,7 @@ setInterval(() => {
       }
       updated = true;
       const ws = clients.get(userKey);
-      if (ws && ws.readyState === 1) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'tier-updated', tier: 'FREE', message: '⌛ Pass expired.' }));
       }
     }
@@ -208,7 +214,7 @@ wss.on('connection', (ws) => {
   }, 1000);
 
   const heartbeatInterval = setInterval(() => {
-    if (ws.readyState === 1) {
+    if (ws.readyState === WebSocket.OPEN) {
       ws.ping();
     } else {
       clearInterval(heartbeatInterval);
@@ -257,7 +263,7 @@ wss.on('connection', (ws) => {
         saveRegistryUser(targetUpper, data.tier);
         broadcastAdminMetrics();
         const target = clients.get(targetUpper);
-        if (target && target.readyState === 1) {
+        if (target && target.readyState === WebSocket.OPEN) {
           target.send(JSON.stringify({ 
             type: 'tier-updated', 
             tier: data.tier,
@@ -390,7 +396,7 @@ wss.on('connection', (ws) => {
         
         if (clients.has(targetAddress)) {
           const targetWs = clients.get(targetAddress);
-          if (targetWs && targetWs.readyState === 1) {
+          if (targetWs && targetWs.readyState === WebSocket.OPEN) {
             let senderHandle = senderKey;
             for (const [handle, ownerKey] of customHandles.entries()) {
               if (ownerKey === senderKey || handle === senderKey) { 
@@ -403,7 +409,9 @@ wss.on('connection', (ws) => {
           }
         }
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('WebSocket message processing error:', err);
+    }
   });
 
   ws.on('close', () => {
@@ -423,7 +431,7 @@ wss.on('connection', (ws) => {
 });
 
 function broadcastAdminMetrics() {
-  if (!adminWs || adminWs.readyState !== 1) return;
+  if (!adminWs || adminWs.readyState !== WebSocket.OPEN) return;
   const activePeers = [];
   const dormantPeers = [];
   const activeKeysSet = new Set();
@@ -451,7 +459,6 @@ function broadcastAdminMetrics() {
       for (const [handle, ownerKey] of customHandles.entries()) {
         if (ownerKey === baseOwnerKey) { userHandle = handle; break; }
       }
-      // Avoid duplicate pushes in dormant list
       if (!dormantPeers.some(p => p.key === userHandle)) {
         dormantPeers.push({ key: userHandle, tier: clientTiers.get(baseOwnerKey) || u.tier || 'FREE' });
       }
@@ -464,7 +471,7 @@ function broadcastAdminMetrics() {
   }));
 }
 
-// --- MASTER REGISTRY ROUTE (Permanent, No Controls) ---
+// --- MASTER REGISTRY ROUTE ---
 app.get('/master-registry', (req, res) => {
   if (req.query.key !== 'GHOST-USB-KEY-999') {
     return res.status(404).send('Not Found');
@@ -543,7 +550,6 @@ app.get('/master-registry', (req, res) => {
   `);
 });
 
-// --- API TO GENERATE AFFILIATE TOKENS ---
 app.use(express.json());
 app.post('/api/generate-affiliate-link', (req, res) => {
   const { influencer, days, masterKey } = req.body;
@@ -565,7 +571,6 @@ app.post('/api/generate-affiliate-link', (req, res) => {
   res.json({ success: true, url });
 });
 
-// --- TEMPORARY AFFILIATE REGISTRY VIEW (Self-Expiring, Read-Only) ---
 app.get('/affiliate-registry', (req, res) => {
   const token = req.query.token;
   if (!token) return res.status(404).send('Link Not Found');
@@ -577,7 +582,6 @@ app.get('/affiliate-registry', (req, res) => {
     return res.status(404).send('<h2 style="color:#d95764; text-align:center; margin-top:100px; font-family:sans-serif;">❌ Invalid or Expired Campaign Link.</h2>');
   }
 
-  // Safe time window check
   if (Date.now() > Number(campaign.expiresAt)) {
     return res.status(403).send('<h2 style="color:#d95764; text-align:center; margin-top:100px; font-family:sans-serif;">⌛ This campaign contract has expired and is no longer accessible.</h2>');
   }
@@ -648,7 +652,9 @@ app.post('/api/create-payment', async (req, res) => {
     const data = await response.json();
     if (data.invoice_url) res.json({ success: true, invoiceUrl: data.invoice_url });
     else res.status(400).json({ success: false });
-  } catch (err) { res.status(500).json({ success: false }); }
+  } catch (err) { 
+    res.status(500).json({ success: false }); 
+  }
 });
 
 app.post('/api/nowpayments-webhook', express.raw({ type: 'application/json' }), (req, res) => {
@@ -663,7 +669,9 @@ app.post('/api/nowpayments-webhook', express.raw({ type: 'application/json' }), 
       grantPremiumWithExpiry(bodyObj.order_id, 30);
     }
     res.status(200).send('OK');
-  } catch (err) { res.status(500).send('Error'); }
+  } catch (err) { 
+    res.status(500).send('Error'); 
+  }
 });
 
 const PORT = process.env.PORT || 8158;

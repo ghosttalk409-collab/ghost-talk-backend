@@ -275,17 +275,17 @@
 
       <div id="tab-ram" class="tab-content active">
         <h3>Zero-Trace Memory State</h3>
-        <p>Ghost Talk operates entirely in transient server RAM. No communication transcripts, user credentials, or shared files are ever written to persistent disk storage or cloud databases. Once a session ends, all operational states vanish.</p>
+        <p>Messages and shared files are relayed through the server in memory only and are never written to disk or a database. To make accounts and subscriptions work, we store a minimal record: your anonymous Ghost ID, a one-way hash of your device secret, your plan status and expiry, and your optional custom handle.</p>
       </div>
 
       <div id="tab-p2p" class="tab-content">
         <h3>Sovereign Peer Routing</h3>
-        <p>Voice calls, video streams, and encrypted text packets flow directly between peers via secure WebRTC channels. The backend server acts solely as a lightweight signaling handshake mechanism.</p>
+        <p>Voice and video calls flow directly between peers over encrypted WebRTC connections, with the server acting only as the signaling handshake. Text messages and files are relayed through our server over TLS.</p>
       </div>
 
       <div id="tab-ephemeral" class="tab-content">
         <h3>Cryptographic Isolation</h3>
-        <p>Engineered with Old Money discretion. Custom handle verification, zero metadata logging, and strict payload ceilings ensure absolute privacy across both web clients and compiled APK runtimes.</p>
+        <p>Engineered with Old Money discretion. Custom handle verification, no message logging, and strict payload ceilings keep your conversations private across both web clients and compiled APK runtimes.</p>
       </div>
     </div>
   </div>
@@ -304,7 +304,7 @@
       <button class="close-modal" onclick="closeModal('tos-modal')">&times;</button>
       <h2>Terms of Service</h2>
       <p>Ghost Talk is provided as an open sovereign communication tool operating strictly on a peer-to-peer basis.</p>
-      <p>Users retain sole responsibility for their operational security, key management, and data exchanges. The protocol enforces zero-trace principles and maintains no persistent logs.</p>
+      <p>Users retain sole responsibility for their operational security, key management, and data exchanges. We do not keep message logs or call records.</p>
     </div>
   </div>
 
@@ -313,12 +313,20 @@
     <div class="modal-content">
       <button class="close-modal" onclick="closeModal('privacy-modal')">&times;</button>
       <h2>Privacy Policy</h2>
-      <p>We collect nothing because we store nothing. All session metadata exists solely in volatile RAM during active connections.</p>
+      <p>We do not store message content, call content or files. We keep only an anonymous account record (Ghost ID, hashed device secret, plan status and expiry, optional handle, sign-up time and, if you arrived through a partner link, its campaign code). Payments are processed by NOWPayments; we receive only a payment confirmation.</p>
       <p>No cookies, no tracking pixels, and no third-party telemetry are integrated into the Ghost Talk ecosystem.</p>
     </div>
   </div>
 
   <script>
+    // Keep a partner referral code when moving from the landing page to the app.
+    (function () {
+      const ref = new URLSearchParams(location.search).get('ref');
+      if (ref && /^[A-Za-z0-9]{6,12}$/.test(ref)) {
+        document.querySelectorAll('a[href="/app"]').forEach(a => { a.href = '/app?ref=' + encodeURIComponent(ref); });
+      }
+    })();
+
     function switchTab(evt, tabId) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));

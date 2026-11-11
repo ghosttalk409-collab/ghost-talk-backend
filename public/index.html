@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Ghost Talk — Secure Mesh Client</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#121212">
+  <link rel="stylesheet" href="/security.css">
   <style>
     :root {
       --bg-dark: #0a0d12;
@@ -168,7 +171,9 @@
       <h3>Unlock Anonymous Premium</h3>
       <p style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">Get unlimited video calls, high-speed file transfers, and custom identity handles.</p>
       <div style="font-size: 24px; font-weight: bold; color: var(--accent-green);" id="modal-display-price">$9.99 / mo</div>
-      <button id="btn-start-checkout" class="btn-green">Proceed to Secure Checkout</button>
+      <button id="btn-start-checkout" class="btn-green">Pay Monthly</button>
+      <div style="font-size: 20px; font-weight: bold; color: var(--accent-green);" id="modal-display-price-yearly">$89.99 / yr</div>
+      <button id="btn-start-checkout-yearly" class="btn-green">Pay Yearly</button>
       <button id="btn-close-payment-modal" class="btn-secondary">Close</button>
     </div>
   </div>

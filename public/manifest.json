@@ -8,9 +8,11 @@
       "sizes": "512x512"
     }
   ],
-  "start_url": "/",
+  "start_url": "/app",
   "background_color": "#121212",
   "theme_color": "#121212",
   "display": "standalone",
-  "orientation": "portrait"
+  "orientation": "portrait",
+  "scope": "/",
+  "id": "/app"
 }

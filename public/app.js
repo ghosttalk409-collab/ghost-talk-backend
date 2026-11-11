@@ -1,4 +1,4 @@
-import { FrameCrypto } from './e2ee.js';
+import { E2E, sha256Hex } from './e2e.js';
 import { SecurityGuard } from './security.js';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -92,7 +92,42 @@ document.addEventListener('DOMContentLoaded', () => {
   let rtcConfigAt = 0;
 
   const security = new SecurityGuard();
-  const frameCrypto = new FrameCrypto();
+
+  // ---- End-to-end encryption: keys exist only in memory; the server only ever sees ciphertext.
+  const shortName = n => String(n || 'Peer').substring(0, 10);
+  const e2e = new E2E(obj => safeSend(obj), ({ id, fingerprint, changed }) => {
+    if (changed) logChat(`System: ⚠️ ${shortName(id)} started a NEW secure session. New security code: ${fingerprint}. Re-check it if you did not expect this.`);
+    else logChat(`System: 🔒 End-to-end encrypted with ${shortName(id)}. Security code: ${fingerprint}. Compare it with your contact (e.g. during a call) to be sure nobody is intercepting.`);
+  });
+  const sdpHashes = new Map();       // `${peer}|offer|answer` -> sha256 of the SDP, delivered over the encrypted channel
+  const objectUrls = [];             // blob URLs for received files, revoked on wipe
+  const lastResync = new Map();
+  let iceSendReady = false;
+  let localIceBuffer = [];
+
+  async function sendSecure(addr, header, bytes) {
+    const payload = await e2e.encrypt(addr, header, bytes);
+    safeSend({ type: 'e2e-msg', targetKey: addr, payload });
+  }
+  function resync(from) {
+    const now = Date.now();
+    if (now - (lastResync.get(from) || 0) < 5000) return;
+    lastResync.set(from, now);
+    e2e.drop(from);
+    e2e.ensure(from).catch(() => {});
+  }
+  async function verifySdp(from, kind, sdp) {
+    const key = `${from}|${kind}`;
+    for (let i = 0; i < 60 && !sdpHashes.has(key); i++) await new Promise(r => setTimeout(r, 100));
+    const expected = sdpHashes.get(key);
+    sdpHashes.delete(key);
+    return !!expected && expected === await sha256Hex(sdp);
+  }
+  function flushLocalIce() {
+    iceSendReady = true;
+    const list = localIceBuffer; localIceBuffer = [];
+    list.forEach(c => { if (callPeer) safeSend({ type: 'ice-candidate', targetKey: callPeer, candidate: c }); });
+  }
 
   const DEFAULT_ICE = {
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }]
@@ -154,6 +189,14 @@ document.addEventListener('DOMContentLoaded', () => {
   myHandle = localStorage.getItem('ghost_handle') || '';
   refreshIdentityUI();
 
+  // Affiliate attribution: remember ?ref=CODE from the first visit (only used when a new account is created).
+  {
+    const refParam = new URLSearchParams(window.location.search).get('ref');
+    if (refParam && /^[A-Za-z0-9]{6,12}$/.test(refParam) && !localStorage.getItem('ghost_ref')) {
+      localStorage.setItem('ghost_ref', refParam.toUpperCase());
+    }
+  }
+
   // ------------------------------------------------------------ tier UI
   // The server is the only source of truth; localStorage is just a startup hint for the UI.
   function applyUIPremiumState(premium, expiresAt = null) {
@@ -191,35 +234,34 @@ document.addEventListener('DOMContentLoaded', () => {
     chatBox.scrollTop = chatBox.scrollHeight;
   }
 
-  const SAFE_IMAGE_RE = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
-  function logFileReceived(senderKey, fileName, fileData, fileType) {
+  const SAFE_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+  function logFileReceived(senderKey, fileName, bytes, mime) {
     if (!chatBox) return;
     const div = document.createElement('div');
     div.style.margin = '6px 0';
-    const shortKey = senderKey ? String(senderKey).substring(0, 8) : 'Peer';
     const safeName = String(fileName || 'file').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 100);
-    const isImg = typeof fileData === 'string' && SAFE_IMAGE_RE.test(fileData);
+    const isImg = SAFE_IMAGE_MIME.has(mime);
 
     const label = document.createElement('strong');
-    label.textContent = `${shortKey} ${isImg ? '[Image]' : '[File]'}: `;
+    label.textContent = `${shortName(senderKey)} ${isImg ? '[Image]' : '[File]'}: `;
     div.appendChild(label);
 
+    // Always rebuilt from decrypted bytes with a type we choose, so remote content can never run as code.
+    const url = URL.createObjectURL(new Blob([bytes], { type: isImg ? mime : 'application/octet-stream' }));
+    objectUrls.push(url);
     if (isImg) {
       div.append(safeName, document.createElement('br'));
       const img = document.createElement('img');
-      img.src = fileData;
+      img.src = url;
       img.style.cssText = 'max-width:150px;border-radius:4px;margin-top:4px;';
       div.appendChild(img);
-    } else if (typeof fileData === 'string' && fileData.startsWith('data:')) {
+    } else {
       const a = document.createElement('a');
-      // force a harmless MIME type so nothing is ever rendered/executed
-      a.href = fileData.replace(/^data:[^;,]*/, 'data:application/octet-stream');
+      a.href = url;
       a.download = safeName;
       a.style.cssText = 'color:#c5a059;text-decoration:underline;';
       a.textContent = `Download ${safeName}`;
       div.appendChild(a);
-    } else {
-      div.append(safeName);
     }
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
@@ -263,10 +305,10 @@ document.addEventListener('DOMContentLoaded', () => {
     socket = ws;
 
     ws.onopen = () => {
-      statusBar.innerText = 'STATUS: ONLINE | ENCRYPTED IN TRANSIT';
+      statusBar.innerText = 'STATUS: ONLINE | END-TO-END ENCRYPTED';
       statusBar.classList.remove('offline');
       reconnectAttempts = 0;
-      ws.send(JSON.stringify({ type: 'register', key: accountKey, secret: mySecret }));
+      ws.send(JSON.stringify({ type: 'register', key: accountKey, secret: mySecret, ref: localStorage.getItem('ghost_ref') || undefined }));
       flushSocketQueue();
       clearInterval(pingTimer);
       pingTimer = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('{"type":"ping"}'); }, 20000);
@@ -287,6 +329,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     ws.onerror = () => { try { ws.close(); } catch {} };
   }
+
+  // Tap your ID to copy it (the global copy-redaction in security.js would otherwise block this).
+  if (myIdentityInput) {
+    myIdentityInput.addEventListener('click', () => {
+      myIdentityInput.select();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(displayIdentity()).then(() => logChat('System: Your ID was copied.')).catch(() => {});
+      }
+    });
+  }
+
+  // If this tab was displaced by another device, tapping the status bar takes the session back.
+  statusBar.addEventListener('click', () => {
+    if (suppressReconnect) { suppressReconnect = false; reconnectAttempts = 0; if (socket) { try { socket.close(); } catch {} } initWebSocket(); }
+  });
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible' || suppressReconnect) return;
@@ -335,6 +392,7 @@ document.addEventListener('DOMContentLoaded', () => {
         logChat(`System: ${msg.message}`);
         break;
       case 'peer-offline':
+        if (msg.forType === 'e2e-key') e2e.peerOffline(msg.targetKey);
         logChat('System: That contact is offline right now.');
         if (callState === 'CALLING' && peerMatches(msg.targetKey)) endCall(false);
         break;
@@ -370,6 +428,12 @@ document.addEventListener('DOMContentLoaded', () => {
           callPeerAlias = msg.senderKey || '';
           clearTimeout(ringTimeout);
           try {
+            if (!(await verifySdp(msg.senderKey, 'answer', msg.answer.sdp))) {
+              endCall(true);
+              alert('Call security check failed (possible interception). The call was ended.');
+              return;
+            }
+            if (callState !== 'CALLING' || !peerConnection) return;
             await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.answer));
             await processPendingIceCandidates();
             callState = 'CONNECTED';
@@ -388,19 +452,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         break;
 
-      case 'chat':
-        ensureContact(msg.senderKey, 'Peer');
-        activeCallTarget = msg.senderKey;
-        renderContacts();
-        logChat(`${String(msg.senderKey).substring(0, 8)}: ${msg.text}`);
+      case 'e2e-key':
+        e2e.handleKey(msg.senderKey, msg);
         break;
 
-      case 'file-transfer':
-        ensureContact(msg.senderKey, 'Peer');
-        activeCallTarget = msg.senderKey;
-        renderContacts();
-        logFileReceived(msg.senderKey, msg.fileName, msg.fileData, msg.fileType);
+      case 'e2e-msg': {
+        if (!msg.senderKey || typeof msg.payload !== 'string') break;
+        let dec;
+        try { dec = await e2e.decrypt(msg.senderKey, msg.payload); }
+        catch (e) {
+          logChat(`System: A message from ${shortName(msg.senderKey)} could not be verified and was discarded. Re-establishing the secure channel...`);
+          resync(msg.senderKey);
+          break;
+        }
+        handleSecureContent(msg.senderKey, dec.header, dec.bytes);
         break;
+      }
 
       case 'decline':
         if (callState === 'CALLING' || peerMatches(msg.senderKey)) {
@@ -419,6 +486,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function handleSecureContent(from, header, bytes) {
+    switch (header.t) {
+      case 'chat':
+        if (typeof header.text !== 'string') return;
+        ensureContact(from, 'Peer');
+        activeCallTarget = from;
+        renderContacts();
+        logChat(`${shortName(from)}: ${header.text.slice(0, 4000)}`);
+        break;
+      case 'file':
+        if (bytes.length > 5 * 1024 * 1024) return;
+        ensureContact(from, 'Peer');
+        activeCallTarget = from;
+        renderContacts();
+        logFileReceived(from, header.name, bytes, typeof header.mime === 'string' ? header.mime : '');
+        break;
+      case 'sdp':
+        if ((header.kind === 'offer' || header.kind === 'answer') && /^[a-f0-9]{64}$/.test(header.h || '')) {
+          sdpHashes.set(`${from}|${header.kind}`, header.h);
+        }
+        break;
+    }
+  }
+
   // ------------------------------------------------------------ WebRTC
   async function getRtcConfig() {
     if (rtcConfigCache && Date.now() - rtcConfigAt < 10 * 60 * 1000) return rtcConfigCache;
@@ -426,7 +517,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch(`${apiBase}/api/ice-servers`, { signal: AbortSignal.timeout(4000) });
       const data = await res.json();
       if (Array.isArray(data.iceServers) && data.iceServers.length) {
-        rtcConfigCache = { iceServers: data.iceServers };
+        rtcConfigCache = { iceServers: data.iceServers, ...(data.iceTransportPolicy === 'relay' ? { iceTransportPolicy: 'relay' } : {}) };
         rtcConfigAt = Date.now();
         return rtcConfigCache;
       }
@@ -449,7 +540,9 @@ document.addEventListener('DOMContentLoaded', () => {
     peerConnection = new RTCPeerConnection(await getRtcConfig());
 
     peerConnection.onicecandidate = e => {
-      if (e.candidate && callPeer) safeSend({ type: 'ice-candidate', targetKey: callPeer, candidate: e.candidate });
+      if (!e.candidate || !callPeer) return;
+      if (!iceSendReady) localIceBuffer.push(e.candidate);   // hold until the offer/answer has been sent
+      else safeSend({ type: 'ice-candidate', targetKey: callPeer, candidate: e.candidate });
     };
 
     peerConnection.onconnectionstatechange = () => {
@@ -495,6 +588,14 @@ document.addEventListener('DOMContentLoaded', () => {
     callPeerAlias = '';
     pendingIceCandidates = [];
 
+    logChat('System: Securing the call...');
+    if (!(await e2e.ensure(callPeer))) {
+      resetCallState();
+      alert('Could not open a secure channel. Is the contact online?');
+      return;
+    }
+    if (callState !== 'CALLING') return;
+
     try {
       localStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
@@ -508,10 +609,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (callState !== 'CALLING') { stopLocalMedia(); return; }
 
     try {
+      iceSendReady = false; localIceBuffer = [];
       await setupWebRTC(wantVideo);
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
+      // The server relays the SDP (which carries the DTLS fingerprint). Its hash travels over the
+      // end-to-end channel so the callee can detect any tampering by the server.
+      await sendSecure(callPeer, { t: 'sdp', kind: 'offer', h: await sha256Hex(offer.sdp) });
       safeSend({ type: 'offer', targetKey: callPeer, offer: { type: offer.type, sdp: offer.sdp }, hasVideo: wantVideo });
+      flushLocalIce();
       logChat(`System: Calling ${callPeer} ...`);
       clearTimeout(ringTimeout);
       ringTimeout = setTimeout(() => {
@@ -543,13 +649,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (callState !== 'RINGING') { stopLocalMedia(); return; } // caller hung up while we were asking permission
 
+    // Check the offer against the hash the caller sent over the end-to-end channel.
+    if (!(await verifySdp(msg.senderKey, 'offer', msg.offer.sdp))) {
+      safeSend({ type: 'decline', targetKey: callPeer });
+      endCall(false);
+      alert('Call security check failed (possible interception). The call was refused.');
+      return;
+    }
+    if (callState !== 'RINGING') { stopLocalMedia(); return; }
+
     try {
+      iceSendReady = false; localIceBuffer = [];
       await setupWebRTC(msg.hasVideo);
       await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.offer));
       await processPendingIceCandidates();
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
+      await sendSecure(callPeer, { t: 'sdp', kind: 'answer', h: await sha256Hex(answer.sdp) });
       safeSend({ type: 'answer', targetKey: callPeer, answer: { type: answer.type, sdp: answer.sdp } });
+      flushLocalIce();
       callPeerAlias = msg.senderKey;
       callState = 'CONNECTED';
       incomingOffer = null;
@@ -579,6 +697,9 @@ document.addEventListener('DOMContentLoaded', () => {
     callPeerAlias = '';
     incomingOffer = null;
     pendingIceCandidates = [];
+    iceSendReady = false;
+    localIceBuffer = [];
+    sdpHashes.clear();
     micMuted = false;
     camOff = false;
   }
@@ -596,7 +717,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     videoContainer.style.display = 'none';
     callControls.style.display = 'none';
-    if (clearChat) { chatBox.innerHTML = ''; chatInput.value = ''; }
+    if (clearChat) {
+      chatBox.innerHTML = ''; chatInput.value = '';
+      if (peer) e2e.drop(peer);                       // forget this conversation's keys
+      objectUrls.splice(0).forEach(u => URL.revokeObjectURL(u));
+    }
     if (btnToggleMic) btnToggleMic.innerText = '🎙️ Mic On';
     if (btnToggleCam) btnToggleCam.innerText = '📹 Cam On';
     logChat(clearChat ? 'System: Session ended. Chat cleared.' : 'System: Call ended.');
@@ -631,15 +756,29 @@ document.addEventListener('DOMContentLoaded', () => {
   btnChat.onclick = () => {
     if (!activeCallTarget || !isValidContact(activeCallTarget)) { alert('Select a contact.'); return; }
     safeSend({ type: 'text-notify', targetKey: activeCallTarget });
-    logChat('System: Chat session ready.');
+    e2e.ensure(activeCallTarget).then(ok => { if (!ok) logChat('System: Could not open a secure channel. Is the contact online?'); });
   };
 
-  btnSend.onclick = () => {
-    const text = chatInput.value.trim();
-    if (!text || !activeCallTarget || !isValidContact(activeCallTarget)) return;
-    safeSend({ type: 'chat', targetKey: activeCallTarget, text: text.slice(0, 4000) });
-    logChat(`Me: ${text}`);
+  btnSend.onclick = async () => {
+    const text = chatInput.value.trim().slice(0, 4000);
+    const target = activeCallTarget;
+    if (!text || !target || !isValidContact(target)) return;
     chatInput.value = '';
+    btnSend.disabled = true;
+    try {
+      if (!(await e2e.ensure(target))) {
+        logChat('System: Could not open a secure channel. Is the contact online?');
+        chatInput.value = text;
+        return;
+      }
+      await sendSecure(target, { t: 'chat', text });
+      logChat(`Me: ${text}`);
+    } catch (e) {
+      logChat('System: Message not sent (secure channel error).');
+      chatInput.value = text;
+    } finally {
+      btnSend.disabled = false;
+    }
   };
   chatInput.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); btnSend.click(); } };
 
@@ -655,12 +794,19 @@ document.addEventListener('DOMContentLoaded', () => {
       if (file.size > 5 * 1024 * 1024) { alert('File size exceeds the 5MB limit.'); fileInput.value = ''; return; }
       const target = activeCallTarget;
       const reader = new FileReader();
-      reader.onload = evt => {
-        safeSend({ type: 'file-transfer', targetKey: target, fileName: file.name, fileType: file.type, fileData: evt.target.result });
-        logChat(`Me [File]: ${file.name}`);
+      reader.onload = async evt => {
         fileInput.value = '';
+        try {
+          if (!(await e2e.ensure(target))) { logChat('System: Could not open a secure channel. Is the contact online?'); return; }
+          await sendSecure(target,
+            { t: 'file', name: file.name.slice(0, 200), mime: (file.type || 'application/octet-stream').slice(0, 100) },
+            new Uint8Array(evt.target.result));
+          logChat(`Me [File]: ${file.name}`);
+        } catch (e) {
+          logChat('System: File not sent (secure channel error or file too large).');
+        }
       };
-      reader.readAsDataURL(file);
+      reader.readAsArrayBuffer(file);
     };
   }
 
@@ -721,6 +867,7 @@ document.addEventListener('DOMContentLoaded', () => {
         e.stopPropagation();
         dropdownMenu.classList.remove('show');
         if (confirm(`Delete contact ${c.name}?`)) {
+          e2e.drop(c.key);
           ramContacts.splice(idx, 1);
           if (activeCallTarget === c.key) activeCallTarget = '';
           renderContacts();
@@ -752,8 +899,8 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await fetch(`${apiBase}/api/payment-info`);
       const data = await res.json();
-      if (modalDisplayPrice) modalDisplayPrice.innerText = `$${data.pricing.monthly}`;
-      if (modalDisplayPriceYearly) modalDisplayPriceYearly.innerText = `$${data.pricing.yearly}`;
+      if (modalDisplayPrice) modalDisplayPrice.innerText = `$${Number(data.pricing.monthly).toFixed(2)} / mo`;
+      if (modalDisplayPriceYearly) modalDisplayPriceYearly.innerText = `$${Number(data.pricing.yearly).toFixed(2)} / yr`;
     } catch (e) { /* show modal anyway */ }
     if (paymentModal) paymentModal.style.display = 'flex';
   };
@@ -900,10 +1047,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // ------------------------------------------------------------ wipe
   btnWipe.onclick = () => {
     endCall(true, true);
+    e2e.wipe();
     ramContacts = [];
     activeCallTarget = '';
     renderContacts();
-    logChat('System: Contacts and chat erased from memory.');
+    logChat('System: Contacts, chat and encryption keys erased from memory.');
   };
 
   renderContacts();

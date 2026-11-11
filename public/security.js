@@ -33,6 +33,9 @@ export class SecurityGuard {
   initClipboardDefense() {
     // Purge clipboard on copy attempts outside secure context
     document.addEventListener('copy', (e) => {
+      // Let people copy their own identity key to share it; everything else stays redacted.
+      const el = document.activeElement;
+      if (el && el.id === 'my-identity') return;
       e.clipboardData.setData('text/plain', '[GHOST TALK: CONTENT REDACTED FOR SECURITY]');
       e.preventDefault();
     });

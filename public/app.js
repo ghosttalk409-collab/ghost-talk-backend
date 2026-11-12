@@ -133,9 +133,9 @@ document.addEventListener('DOMContentLoaded', () => {
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }]
   };
 
-  const isLocalBrowser = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '8158';
-  const apiBase = isLocalBrowser ? 'http://127.0.0.1:8158' : 'https://ghost-talk-backend.onrender.com';
-  const socketUrl = isLocalBrowser ? 'ws://127.0.0.1:8158' : 'wss://ghost-talk-backend.onrender.com';
+    const proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+  const apiBase = window.location.origin;
+  const socketUrl = proto + window.location.host;
 
   const styleInject = document.createElement('style');
   styleInject.textContent = `

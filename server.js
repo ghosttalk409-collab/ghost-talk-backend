@@ -355,11 +355,17 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true, maxPayload: 10 * 1024 * 1024 });
 
 server.on('upgrade', (request, socket, head) => {
-  const pathname = new URL(request.url, `http://${request.headers.host}`).pathname;
-  // Accept connections on root or any path, ensuring Render proxy passes it through
-  wss.handleUpgrade(request, socket, head, (ws) => {
-    wss.emit('connection', ws, request);
+  socket.on('error', (err) => {
+    console.error('❌ WebSocket socket error:', err);
   });
+  try {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  } catch (err) {
+    console.error('❌ WebSocket upgrade handle error:', err);
+    try { socket.destroy(); } catch {}
+  }
 });
 
 const RELAY_TYPES = new Set(['offer', 'answer', 'ice-candidate', 'e2e-key', 'e2e-msg', 'decline', 'end-session', 'text-notify']);
@@ -537,6 +543,13 @@ setInterval(() => {
     try { ws.ping(); } catch {}
   });
 }, 25000).unref();
+
+// Keep-alive self-ping to prevent Render from sleeping after 15 minutes of inactivity
+if (PUBLIC_URL && !PUBLIC_URL.includes('localhost')) {
+  setInterval(() => {
+    fetch(`${PUBLIC_URL}/health`).catch(() => {});
+  }, 10 * 60 * 1000);
+}
 
 async function shutdown() {
   try { await flush(); } catch (e) {}

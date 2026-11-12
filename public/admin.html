@@ -6,61 +6,225 @@
   <title>Ghost Talk - Secure Admin Panel</title>
   <style>
     :root { --bg-dark: #0e1110; --card-bg: #141817; --border-color: #232d2a; --accent-gold: #c5a059; --accent-red: #d95764; --text-main: #e2e8f0; --text-muted: #8892b0; }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background: var(--bg-dark); color: var(--text-main); padding: 16px; font-size: 13px; }
-    .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: 600; font-size: 10px; background: #1a2220; color: var(--accent-gold); border: 1px solid var(--accent-gold); }
+    .header-bar { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); margin-bottom: 16px; }
+    .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: 600; font-size: 10px; background: #1a2220; color: var(--accent-gold); border: 1px solid var(--accent-gold); letter-spacing: 1px; }
+    .grid-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
     .card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-    .btn { background: #1a2220; border: 1px solid var(--accent-gold); color: var(--accent-gold); padding: 6px 10px; border-radius: 4px; cursor: pointer; }
+    .card-title { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 12px; display: flex; justify-content: space-between; letter-spacing: 0.5px; }
+    #metricsCanvas { width: 100%; height: 160px; background: #0b0e0d; border-radius: 6px; border: 1px solid var(--border-color); }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 8px; border-bottom: 1px solid var(--border-color); font-size: 12px; }
+    th { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .btn { background: #1a2220; border: 1px solid var(--accent-gold); color: var(--accent-gold); padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600; transition: all 0.2s; }
     .btn:hover { background: var(--accent-gold); color: #000; }
+    .btn-danger { border-color: var(--accent-red); color: var(--accent-red); background: rgba(217,87,100,0.1); }
+    .btn-danger:hover { background: var(--accent-red); color: #000; }
+    input[type="number"] { width: 100%; background: #0b0e0d; border: 1px solid var(--border-color); color: var(--text-main); padding: 8px; margin: 4px 0 12px 0; border-radius: 4px; font-family: monospace; }
+    input:focus { border-color: var(--accent-gold); outline: none; }
+    #adminContent { display: none; }
   </style>
 </head>
 <body>
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-    <h2>🛡️ GHOST TALK COMMAND DASHBOARD</h2>
+  <div class="header-bar">
+    <div>
+      <h2 style="color: var(--accent-gold); font-size: 16px;">🛡️ GHOST TALK — COMMAND DASHBOARD</h2>
+      <span style="font-size: 10px; color: var(--text-muted);">Sovereign Mesh Telemetry & Control</span>
+    </div>
     <div id="connectionStatus" class="status-badge">CONNECTING...</div>
   </div>
 
-  <div class="card">
-    <h3>Master Key Verification Required</h3>
-    <p style="color: var(--text-muted); margin-top: 8px;">Enter your MASTER_KEY to interact with backend telemetry.</p>
-    <input type="password" id="masterKeyInput" placeholder="Master Key" style="background:#0b0e0d; border:1px solid #232d2a; color:#fff; padding:8px; border-radius:4px; margin-top:10px;">
-    <button class="btn" onclick="authenticateAdmin()">Authenticate Session</button>
+  <div id="authCard" class="card">
+    <div class="card-title"><span>Admin Authentication</span></div>
+    <p style="color: var(--text-muted); margin-bottom: 10px;">Enter your admin passphrase to unlock the dashboard.</p>
+    <input type="password" id="adminPassInput" placeholder="Admin passphrase" style="background:#0b0e0d; border:1px solid #232d2a; color:#fff; padding:8px; border-radius:4px; width:100%; margin-bottom:10px;">
+    <button class="btn" style="width:100%; background:var(--accent-gold); color:#000;" onclick="submitAuth()">Authenticate</button>
+  </div>
+
+  <div id="adminContent">
+    <div class="grid-layout">
+      <div>
+        <div class="card">
+          <div class="card-title"><span>📈 Real-Time Mesh Telemetry Graph</span><span id="activeCountText">Active: 0</span></div>
+          <canvas id="metricsCanvas"></canvas>
+        </div>
+        <div class="card">
+          <div class="card-title"><span>👥 Active Mesh Peers</span></div>
+          <table>
+            <thead><tr><th>Identity Key</th><th>Tier</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="activePeerTableBody"><tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No active peers.</td></tr></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <div class="card-title"><span>📂 Dormant / Historical Registered Peers</span></div>
+          <table>
+            <thead><tr><th>Identity Key</th><th>Tier</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="dormantPeerTableBody"><tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No dormant peers.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="card-title"><span>💰 Pricing Configuration</span></div>
+          <label style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Monthly Plan ($)</label>
+          <input type="number" id="monthlyPriceInput" step="0.01">
+          <label style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Yearly Plan ($)</label>
+          <input type="number" id="yearlyPriceInput" step="0.01">
+          <button class="btn" style="width: 100%; background: var(--accent-gold); color: #000;" onclick="updatePricing()">Update Mesh Pricing</button>
+        </div>
+        <div class="card">
+          <div class="card-title"><span>📂 Permanent Ledger</span></div>
+          <a id="registryLink" href="#" target="_blank" class="btn" style="display:block; text-align:center; text-decoration:none; padding:8px;">Open Master Registry Ledger</a>
+        </div>
+        <div class="card">
+          <div class="card-title"><span>⚠️ Emergency Control</span></div>
+          <button class="btn btn-danger" style="width: 100%; padding: 8px;" onclick="wipeServerRAM()">🔥 Disconnect All Users</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
     let ws = null;
-    let masterKey = '';
+    let historyData = [];
+    let authed = false;
+    const canvas = document.getElementById('metricsCanvas');
+    const ctx = canvas ? canvas.getContext('2d') : null;
     const statusEl = document.getElementById('connectionStatus');
+    const MASTER_KEY = new URLSearchParams(location.search).get('key') || '';
+    document.getElementById('registryLink').href = '/master-registry?key=' + encodeURIComponent(MASTER_KEY);
 
-    function authenticateAdmin() {
-      masterKey = document.getElementById('masterKeyInput').value.trim();
-      if (!masterKey) return alert('Enter master key.');
-      const secret = prompt('Enter Admin Passphrase:');
-      if (!secret) return;
+    function submitAuth() {
+      const secret = document.getElementById('adminPassInput').value.trim();
+      if (!secret) { alert('Enter passphrase.'); return; }
+      initAdminSocket(secret);
+    }
 
+    function initAdminSocket(secret) {
       const proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
       ws = new WebSocket(proto + window.location.host);
-      statusEl.innerText = 'AUTHENTICATING...';
-      
+      statusEl.innerText = 'CONNECTING...';
+
       ws.onopen = () => {
+        statusEl.innerText = 'AUTHENTICATING...';
         ws.send(JSON.stringify({ type: 'admin-auth', secret }));
       };
 
       ws.onmessage = (evt) => {
-        const msg = JSON.parse(evt.data);
+        let msg; try { msg = JSON.parse(evt.data); } catch { return; }
         if (msg.type === 'admin-authenticated') {
-          statusEl.innerText = 'SECURED & AUTHORIZED';
-          alert('Authenticated successfully.');
+          authed = true;
+          statusEl.innerText = 'AUTHORIZED | SECURED';
+          document.getElementById('authCard').style.display = 'none';
+          document.getElementById('adminContent').style.display = 'block';
+          if (msg.pricing) {
+            document.getElementById('monthlyPriceInput').value = msg.pricing.monthly;
+            document.getElementById('yearlyPriceInput').value = msg.pricing.yearly;
+          }
         } else if (msg.type === 'admin-error') {
           statusEl.innerText = 'UNAUTHORIZED';
-          alert(msg.message || 'Authentication failed.');
+          alert(msg.message || 'Unauthorized passphrase.');
+        } else if (msg.type === 'admin-pricing-updated') {
+          document.getElementById('monthlyPriceInput').value = msg.pricing.monthly;
+          document.getElementById('yearlyPriceInput').value = msg.pricing.yearly;
+          alert('Pricing updated successfully.');
+        } else if (msg.type === 'admin-telemetry') {
+          updateDashboardUI(msg.metrics);
         }
       };
 
       ws.onclose = () => {
+        authed = false;
         statusEl.innerText = 'OFFLINE';
       };
     }
+
+    function peerRow(peer, online) {
+      const isPrem = peer.tier === 'PREMIUM';
+      const tr = document.createElement('tr');
+      const tdKey = document.createElement('td');
+      tdKey.style.cssText = 'font-weight:bold;color:' + (online ? 'var(--accent-gold)' : 'var(--text-muted)') + ';';
+      tdKey.textContent = peer.key;
+
+      const tdTier = document.createElement('td');
+      const badge = document.createElement('span');
+      badge.className = 'status-badge';
+      badge.style.color = isPrem ? 'var(--accent-gold)' : 'var(--text-muted)';
+      badge.textContent = peer.tier;
+      tdTier.appendChild(badge);
+
+      const tdStatus = document.createElement('td');
+      tdStatus.style.color = online ? '#00ff88' : 'var(--text-muted)';
+      tdStatus.textContent = online ? 'ONLINE' : 'DORMANT';
+
+      const tdAct = document.createElement('td');
+      const tierBtn = document.createElement('button');
+      tierBtn.className = 'btn';
+      tierBtn.textContent = isPrem ? 'Downgrade' : 'Promote';
+      tierBtn.onclick = () => send({ type: 'admin-set-tier', targetKey: peer.key, tier: isPrem ? 'FREE' : 'PREMIUM' });
+      tdAct.appendChild(tierBtn);
+      if (online) {
+        tdAct.append(' ');
+        const kick = document.createElement('button');
+        kick.className = 'btn btn-danger';
+        kick.textContent = 'Kick';
+        kick.onclick = () => { if (confirm('Kick ' + peer.key + '?')) send({ type: 'admin-kick', targetKey: peer.key }); };
+        tdAct.appendChild(kick);
+      }
+      tr.append(tdKey, tdTier, tdStatus, tdAct);
+      return tr;
+    }
+
+    function fillTable(tbodyId, peers, online, emptyText) {
+      const tbody = document.getElementById(tbodyId);
+      tbody.innerHTML = '';
+      if (!peers || peers.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 4; td.style.cssText = 'text-align:center;color:var(--text-muted);'; td.textContent = emptyText;
+        tr.appendChild(td); tbody.appendChild(tr);
+        return;
+      }
+      peers.forEach(p => tbody.appendChild(peerRow(p, online)));
+    }
+
+    function updateDashboardUI(m) {
+      document.getElementById('activeCountText').innerText = 'Active: ' + m.activePeers.length;
+      fillTable('activePeerTableBody', m.activePeers, true, 'No active peers.');
+      fillTable('dormantPeerTableBody', m.dormantPeers, false, 'No dormant peers.');
+      historyData.push(m.totalConnections);
+      if (historyData.length > 30) historyData.shift();
+      drawChart();
+    }
+
+    function drawChart() {
+      if (!canvas || !ctx) return;
+      const w = canvas.clientWidth || 300, h = canvas.clientHeight || 160;
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
+      ctx.clearRect(0, 0, w, h);
+      const max = Math.max(5, ...historyData);
+      ctx.strokeStyle = '#c5a059'; ctx.lineWidth = 2; ctx.beginPath();
+      const step = w / 29;
+      historyData.forEach((val, i) => {
+        const y = h - 12 - (val / max) * (h - 24);
+        if (i === 0) ctx.moveTo(0, y); else ctx.lineTo(i * step, y);
+      });
+      ctx.stroke();
+    }
+
+    function send(obj) {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !authed) { alert('Not connected.'); return; }
+      ws.send(JSON.stringify(obj));
+    }
+    function updatePricing() {
+      const monthly = parseFloat(document.getElementById('monthlyPriceInput').value);
+      const yearly = parseFloat(document.getElementById('yearlyPriceInput').value);
+      if (!(monthly >= 1) || !(yearly >= 1)) { alert('Enter valid prices.'); return; }
+      send({ type: 'admin-update-pricing', pricing: { monthly, yearly } });
+    }
+    function wipeServerRAM() { if (confirm('Disconnect all users?')) send({ type: 'admin-wipe-ram' }); }
   </script>
 </body>
 </html>

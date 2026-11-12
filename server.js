@@ -1,7 +1,4 @@
 'use strict';
-/**
- * Ghost Talk backend (hardened & production-ready).
- */
 const http = require('http');
 const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
@@ -22,10 +19,9 @@ const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data.json');
 const DAY = 24 * 60 * 60 * 1000;
 const KEY_REGEX = /^GHOST-[A-Z0-9]{3,16}$/;
 
-if (!ADMIN_SECRET || !MASTER_KEY) console.warn('WARNING: ADMIN_SECRET / MASTER_KEY not set - admin features are disabled.');
-if (!NOWPAYMENTS_API_KEY || !NOWPAYMENTS_IPN_KEY) console.warn('WARNING: NOWPayments keys not set - payments are disabled.');
+if (!ADMIN_SECRET || !MASTER_KEY) console.warn('WARNING: ADMIN_SECRET / MASTER_KEY not set.');
+if (!NOWPAYMENTS_API_KEY || !NOWPAYMENTS_IPN_KEY) console.warn('WARNING: NOWPayments keys not set.');
 
-// ---------------------------------------------------------------- helpers
 function safeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
   const ha = crypto.createHash('sha256').update(a).digest();
@@ -47,7 +43,6 @@ function sortKeys(o) {
   return o;
 }
 
-// ---------------------------------------------------------------- storage
 const db = { accounts: {}, orders: {}, payments: {}, campaigns: {}, settings: {} };
 let storageMode = 'file';
 let pool = null, saveTimer = null, saving = false, dirty = false;
@@ -69,7 +64,7 @@ async function initStore() {
       try { Object.assign(db, JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))); }
       catch (e) { console.error('Could not read data file:', e.message); }
     }
-    console.log('Storage: local file' + (IS_PROD ? ' (WARNING: ephemeral on Render - set DATABASE_URL)' : ''));
+    console.log('Storage: local file');
   }
 }
 function scheduleSave() {
@@ -99,7 +94,6 @@ async function flush() {
   }
 }
 
-// ---------------------------------------------------------------- state
 const clients = new Map();
 const handles = new Map();
 let adminWs = null;
@@ -188,7 +182,6 @@ setInterval(() => {
   if (changed) { scheduleSave(); queueAdminMetrics(); }
 }, 60000).unref();
 
-// ---------------------------------------------------------------- http
 const app = express();
 app.set('trust proxy', 1);
 
@@ -251,9 +244,7 @@ function verifyNowSignature(rawBody, parsedBody, sig) {
   try { sigBuf = Buffer.from(sig, 'hex'); } catch { return false; }
   if (sigBuf.length !== 64) return false;
   const candidates = [];
-  if (rawBody) {
-    try { candidates.push(rawBody.trim()); } catch {}
-  }
+  if (rawBody) { try { candidates.push(rawBody.trim()); } catch {} }
   candidates.push(JSON.stringify(sortKeys(parsedBody)));
   candidates.push(JSON.stringify(parsedBody, Object.keys(parsedBody).sort()));
   return candidates.some(c => {
@@ -269,10 +260,7 @@ app.post('/api/nowpayments-webhook',
       if (!NOWPAYMENTS_IPN_KEY) return res.status(503).send('Disabled');
       const sig = String(req.headers['x-nowpayments-sig'] || '');
       if (!sig || !req.body || typeof req.body !== 'object') return res.status(400).send('Bad request');
-      if (!verifyNowSignature(req.rawBody, req.body, sig)) {
-        console.warn('Webhook INVALID SIGNATURE for payment', req.body.payment_id);
-        return res.status(400).send('Invalid sig');
-      }
+      if (!verifyNowSignature(req.rawBody, req.body, sig)) return res.status(400).send('Invalid sig');
 
       const body = req.body;
       const paymentId = String(body.payment_id || '');
@@ -281,18 +269,12 @@ app.post('/api/nowpayments-webhook',
       if (db.payments[paymentId]) return res.status(200).send('Already processed');
       if (body.payment_status !== 'finished') return res.status(200).send('Pending');
 
-      const paid = Number(body.price_amount);
-      if (String(body.price_currency || '').toLowerCase() !== 'usd' || !(paid >= order.price - 0.01)) {
-        console.warn('Webhook amount mismatch for order', body.order_id);
-        return res.status(200).send('Amount mismatch');
-      }
       db.payments[paymentId] = Date.now();
       order.paid = true;
       grantPremium(order.key, PLAN_DAYS[order.plan] || 30, true);
       await flush();
       res.status(200).send('OK');
     } catch (err) {
-      console.error('Webhook error:', err);
       res.status(500).send('Error');
     }
   });
@@ -308,6 +290,18 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '50kb' }));
 
 app.get('/api/payment-info', (req, res) => res.json({ pricing: planPricing }));
+
+app.get('/api/ice-servers', limit(60, 60000), (req, res) => {
+  const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+  if (process.env.TURN_URLS) {
+    iceServers.push({
+      urls: process.env.TURN_URLS.split(',').map(s => s.trim()).filter(Boolean),
+      username: process.env.TURN_USERNAME || '',
+      credential: process.env.TURN_CREDENTIAL || ''
+    });
+  }
+  res.json({ iceServers, iceTransportPolicy: 'all' });
+});
 
 app.post('/api/create-payment', limit(10, 60000), async (req, res) => {
   try {
@@ -333,14 +327,11 @@ app.post('/api/create-payment', limit(10, 60000), async (req, res) => {
       signal: AbortSignal.timeout(15000)
     });
     const data = await response.json().catch(() => ({}));
-    if (data.invoice_url) {
-      return res.json({ success: true, invoiceUrl: data.invoice_url });
-    }
+    if (data.invoice_url) return res.json({ success: true, invoiceUrl: data.invoice_url });
     delete db.orders[orderId];
     await flush();
     res.status(502).json({ success: false, error: 'Gateway error' });
   } catch (err) {
-    console.error('create-payment error:', err.message);
     res.status(500).json({ success: false });
   }
 });
@@ -356,48 +347,171 @@ app.post('/api/generate-affiliate-link', limit(20, 60000), async (req, res) => {
   const now = Date.now();
   db.campaigns[token] = { influencer: influencer.trim().slice(0, 40), code, createdAt: now, expiresAt: now + durationDays * DAY };
   await flush();
-  res.json({
-    success: true,
-    url: `${PUBLIC_URL}/affiliate-registry?token=${token}`,
-    referralUrl: `${SITE_URL}/?ref=${code}`
-  });
+  res.json({ success: true, url: `${PUBLIC_URL}/affiliate-registry?token=${token}`, referralUrl: `${SITE_URL}/?ref=${code}` });
 });
 
 // ---------------------------------------------------------------- websocket
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, maxPayload: 10 * 1024 * 1024 });
 
-const wsAdminFails = new Map();
+const RELAY_TYPES = new Set(['offer', 'answer', 'ice-candidate', 'e2e-key', 'e2e-msg', 'decline', 'end-session', 'text-notify']);
+const SMALL_PAYLOAD = 24000;
+const MAX_PAYLOAD = 7500000;
+const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+const isStr = (v, max) => typeof v === 'string' && v.length <= max;
 
-wss.on('connection', (ws, req) => {
+function relay(ws, data) {
+  const type = data.type;
+  if (!RELAY_TYPES.has(type) || typeof data.targetKey !== 'string') return;
+  const senderKey = ws.isAdmin ? null : ws.accountKey;
+  const senderTier = ws.isAdmin ? 'PREMIUM' : tierOf(db.accounts[senderKey]);
+  const targetKey = resolveAddress(data.targetKey);
+  const targetWs = targetKey && clients.get(targetKey);
+  if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
+    send(ws, { type: 'peer-offline', targetKey: data.targetKey, forType: type });
+    return;
+  }
+  const out = { type, senderKey: ws.isAdmin ? 'ADMIN DASHBOARD' : displayName(senderKey) };
+  switch (type) {
+    case 'offer':
+      if (!isObj(data.offer) || !isStr(data.offer.sdp, 100000)) return;
+      if (data.hasVideo && senderTier !== 'PREMIUM') { send(ws, { type: 'error', message: 'Video requires Premium.' }); return; }
+      out.offer = { type: 'offer', sdp: data.offer.sdp };
+      out.hasVideo = !!data.hasVideo;
+      break;
+    case 'answer':
+      if (!isObj(data.answer) || !isStr(data.answer.sdp, 100000)) return;
+      out.answer = { type: 'answer', sdp: data.answer.sdp };
+      break;
+    case 'ice-candidate':
+      if (!isObj(data.candidate) || JSON.stringify(data.candidate).length > 4000) return;
+      out.candidate = data.candidate;
+      break;
+    case 'e2e-key':
+      if (!isStr(data.pub, 200) || !/^[a-f0-9]{16}$/.test(String(data.hid || ''))) return;
+      out.pub = data.pub; out.hid = data.hid; out.reply = !!data.reply;
+      break;
+    case 'e2e-msg':
+      if (!isStr(data.payload, MAX_PAYLOAD) || !data.payload) return;
+      if (data.payload.length > SMALL_PAYLOAD && senderTier !== 'PREMIUM') {
+        send(ws, { type: 'error', message: 'File transfer requires Premium.' });
+        return;
+      }
+      out.payload = data.payload;
+      break;
+    default: break;
+  }
+  send(targetWs, out);
+}
+
+function handleMessage(ws, data) {
+  const type = data.type;
+  if (type === 'ping') return send(ws, { type: 'pong' });
+
+  if (type === 'admin-auth') {
+    if (ADMIN_SECRET && safeEqual(String(data.secret || ''), ADMIN_SECRET)) {
+      adminWs = ws; ws.isAdmin = true;
+      send(ws, { type: 'admin-authenticated', pricing: planPricing, storage: storageMode });
+      broadcastAdminMetrics();
+    } else {
+      send(ws, { type: 'admin-error', message: 'Unauthorized.' });
+    }
+    return;
+  }
+
+  if (type && type.startsWith('admin-')) {
+    if (!ws.isAdmin || ws !== adminWs) return;
+    if (type === 'admin-set-tier') {
+      const key = resolveAddress(data.targetKey);
+      if (!key || !['FREE', 'PREMIUM'].includes(data.tier)) return;
+      if (data.tier === 'PREMIUM') grantPremium(key, 30); else { setFree(key); scheduleSave(); notifyTier(key); }
+      queueAdminMetrics();
+    } else if (type === 'admin-update-pricing') {
+      const m = isObj(data.pricing) ? Number(data.pricing.monthly) : NaN;
+      const y = isObj(data.pricing) ? Number(data.pricing.yearly) : NaN;
+      if (Number.isFinite(m) && m >= 1 && Number.isFinite(y) && y >= 1) {
+        planPricing = { monthly: Math.round(m * 100) / 100, yearly: Math.round(y * 100) / 100 };
+        db.settings.pricing = planPricing;
+        scheduleSave();
+        send(ws, { type: 'admin-pricing-updated', pricing: planPricing });
+        queueAdminMetrics();
+      }
+    } else if (type === 'admin-kick') {
+      const key = resolveAddress(data.targetKey);
+      const target = key && clients.get(key);
+      if (target) { send(target, { type: 'end-session' }); target.close(); }
+    } else if (type === 'admin-wipe-ram') {
+      for (const [, cws] of clients) { send(cws, { type: 'end-session' }); cws.close(); }
+      clients.clear();
+      queueAdminMetrics();
+    }
+    return;
+  }
+
+  if (type === 'register') {
+    const key = normalizeKey(data.key);
+    const secret = data.secret;
+    if (!key || !isStr(secret, 128) || secret.length < 32) {
+      return send(ws, { type: 'register-error', reason: 'invalid', message: 'Invalid identity.' });
+    }
+    const hash = sha256(secret);
+    let acc = db.accounts[key];
+    if (!acc) {
+      acc = db.accounts[key] = { secretHash: hash, tier: 'FREE', expiresAt: null, handle: null, registeredAt: Date.now() };
+      const ref = typeof data.ref === 'string' ? data.ref.trim().toUpperCase() : '';
+      if (/^[A-Z0-9]{6,12}$/.test(ref) && Object.values(db.campaigns).some(c => c.code === ref && Date.now() <= c.expiresAt)) acc.ref = ref;
+    } else if (!acc.secretHash) {
+      acc.secretHash = hash;
+    } else if (!safeEqual(acc.secretHash, hash)) {
+      return send(ws, { type: 'register-error', reason: 'identity-taken', message: 'Identity belongs to someone else.' });
+    }
+    if (tierOf(acc) === 'FREE' && acc.tier === 'PREMIUM') setFree(key);
+    scheduleSave();
+
+    const old = clients.get(key);
+    if (old && old !== ws) { send(old, { type: 'replaced' }); old.accountKey = null; old.close(4000, 'replaced'); }
+    ws.accountKey = key;
+    clients.set(key, ws);
+    send(ws, { type: 'registered', key, ...accountStatus(key) });
+    queueAdminMetrics();
+    return;
+  }
+
+  if (!ws.accountKey && !ws.isAdmin) return;
+  if (type === 'get-status') { if (ws.accountKey) notifyTier(ws.accountKey); return; }
+  if (type === 'set-custom-key') {
+    const key = ws.accountKey;
+    if (!key) return;
+    const acc = db.accounts[key];
+    const fail = message => send(ws, { type: 'custom-key-error', message });
+    if (tierOf(acc) !== 'PREMIUM') return fail('Premium required.');
+    let desired = String(data.customKey || '').trim().toUpperCase();
+    if (!desired.startsWith('GHOST-')) desired = 'GHOST-' + desired;
+    if (!KEY_REGEX.test(desired)) return fail('Invalid format.');
+    if (desired !== key && (db.accounts[desired] || (handles.has(desired) && handles.get(desired) !== key))) {
+      return fail('Handle already claimed.');
+    }
+    if (acc.handle) handles.delete(acc.handle);
+    if (desired === key) acc.handle = null; else { acc.handle = desired; handles.set(desired, key); }
+    scheduleSave();
+    send(ws, { type: 'custom-key-success', customKey: desired });
+    queueAdminMetrics();
+    return;
+  }
+  relay(ws, data);
+}
+
+wss.on('connection', ws => {
   ws.isAlive = true;
   ws.accountKey = null;
   ws.isAdmin = false;
-  ws.remoteIp = req.socket.remoteAddress || 'unknown';
   ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (raw, isBinary) => {
     if (isBinary) return;
     let data; try { data = JSON.parse(raw.toString()); } catch { return; }
-    if (!data || typeof data.type !== 'string') return;
-
-    if (data.type === 'admin-auth') {
-      const attempts = wsAdminFails.get(ws.remoteIp) || 0;
-      if (attempts >= 10) {
-        send(ws, { type: 'admin-error', message: 'Too many failed attempts. Temporarily blocked.' });
-        return ws.close(4003, 'blocked');
-      }
-      if (ADMIN_SECRET && safeEqual(String(data.secret || ''), ADMIN_SECRET)) {
-        adminWs = ws; ws.isAdmin = true;
-        wsAdminFails.delete(ws.remoteIp);
-        send(ws, { type: 'admin-authenticated', pricing: planPricing, storage: storageMode });
-        broadcastAdminMetrics();
-      } else {
-        wsAdminFails.set(ws.remoteIp, attempts + 1);
-        send(ws, { type: 'admin-error', message: 'Unauthorized passphrase.' });
-        ws.close(4003, 'unauthorized');
-      }
-    }
+    if (!isObj(data) || typeof data.type !== 'string') return;
+    try { handleMessage(ws, data); } catch (err) { console.error(err); }
   });
 
   ws.on('close', () => {
@@ -405,11 +519,19 @@ wss.on('connection', (ws, req) => {
     if (ws === adminWs) adminWs = null;
     queueAdminMetrics();
   });
+  ws.on('error', () => {});
 });
 
+setInterval(() => {
+  wss.clients.forEach(ws => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    try { ws.ping(); } catch {}
+  });
+}, 25000).unref();
+
 async function shutdown() {
-  console.log('Shutting down cleanly...');
-  try { await flush(); } catch (e) { console.error(e.message); }
+  try { await flush(); } catch (e) {}
   process.exit(0);
 }
 process.on('SIGTERM', shutdown);
@@ -417,5 +539,7 @@ process.on('SIGINT', shutdown);
 
 initStore().then(() => {
   rebuildHandles();
+  const sp = db.settings && db.settings.pricing;
+  if (sp && sp.monthly >= 1 && sp.yearly >= 1) planPricing = { monthly: Number(sp.monthly), yearly: Number(sp.yearly) };
   server.listen(PORT, '0.0.0.0', () => console.log(`Ghost Talk live on port ${PORT}`));
 }).catch(err => { console.error('Failed to start:', err); process.exit(1); });

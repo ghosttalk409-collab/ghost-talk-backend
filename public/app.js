@@ -315,14 +315,22 @@ function debugWebSocketConnection(url) {
 }
 // Run probe immediately on load
 debugWebSocketConnection(socketUrl);
-  function initWebSocket() {
+    function initWebSocket() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
 
-    const ws = new WebSocket(socketUrl);
+    logChat(`[DEBUG] Dialing WebSocket: ${socketUrl}`);
+    let ws;
+    try {
+      ws = new WebSocket(socketUrl);
+    } catch (err) {
+      logChat(`[DEBUG] Instant Constructor Error: ${err.message}`);
+      return;
+    }
     socket = ws;
 
     ws.onopen = () => {
+      logChat('[DEBUG] Handshake OK! Sending registration...');
       statusBar.innerText = 'STATUS: ONLINE | END-TO-END ENCRYPTED';
       statusBar.classList.remove('offline');
       reconnectAttempts = 0;
@@ -331,6 +339,26 @@ debugWebSocketConnection(socketUrl);
       clearInterval(pingTimer);
       pingTimer = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('{"type":"ping"}'); }, 20000);
     };
+
+    ws.onmessage = event => {
+      try { handleSignalingMessage(JSON.parse(event.data)); }
+      catch (e) { logChat(`[DEBUG] Bad message: ${e.message}`); }
+    };
+
+    ws.onclose = event => {
+      if (socket !== ws) return;
+      clearInterval(pingTimer);
+      logChat(`[DEBUG] Closed -> Code: ${event.code} | Reason: "${event.reason || 'none'}" | Clean: ${event.wasClean}`);
+      statusBar.innerText = suppressReconnect ? 'STATUS: OPEN IN ANOTHER TAB/DEVICE' : 'STATUS: OFFLINE | RECONNECTING...';
+      statusBar.classList.add('offline');
+      scheduleReconnect();
+    };
+
+    ws.onerror = () => {
+      logChat('[DEBUG] WebSocket error event triggered.');
+      try { ws.close(); } catch {}
+    };
+  }
 
     ws.onmessage = event => {
       try { handleSignalingMessage(JSON.parse(event.data)); }

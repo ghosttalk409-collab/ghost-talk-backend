@@ -352,21 +352,7 @@ app.post('/api/generate-affiliate-link', limit(20, 60000), async (req, res) => {
 
 // ---------------------------------------------------------------- websocket
 const server = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true, maxPayload: 10 * 1024 * 1024 });
-
-server.on('upgrade', (request, socket, head) => {
-  socket.on('error', (err) => {
-    console.error('❌ WebSocket socket error:', err);
-  });
-  try {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
-    });
-  } catch (err) {
-    console.error('❌ WebSocket upgrade handle error:', err);
-    try { socket.destroy(); } catch {}
-  }
-});
+const wss = new WebSocketServer({ server, maxPayload: 10 * 1024 * 1024 });
 
 const RELAY_TYPES = new Set(['offer', 'answer', 'ice-candidate', 'e2e-key', 'e2e-msg', 'decline', 'end-session', 'text-notify']);
 const SMALL_PAYLOAD = 24000;

@@ -296,7 +296,25 @@ document.addEventListener('DOMContentLoaded', () => {
     reconnectAttempts++;
     reconnectTimer = setTimeout(() => { reconnectTimer = null; initWebSocket(); }, timeout);
   }
-
+// --- DIAGNOSTIC WEBSOCKET PROBE ---
+function debugWebSocketConnection(url) {
+  console.log(`[DIAGNOSTIC] Attempting WebSocket connection to: ${url}`);
+  const testSocket = new WebSocket(url);
+  
+  testSocket.onopen = () => {
+    console.log('[DIAGNOSTIC] ✅ WebSocket HANDSHAKE SUCCESSFUL! Connection open.');
+  };
+  
+  testSocket.onerror = (error) => {
+    console.error('[DIAGNOSTIC] ❌ WebSocket ERROR event fired:', error);
+  };
+  
+  testSocket.onclose = (event) => {
+    console.warn(`[DIAGNOSTIC] ⚠️ WebSocket CLOSED. Code: ${event.code}, Reason: "${event.reason}", Clean: ${event.wasClean}`);
+  };
+}
+// Run probe immediately on load
+debugWebSocketConnection(socketUrl);
   function initWebSocket() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;

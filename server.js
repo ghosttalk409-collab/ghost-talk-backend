@@ -352,7 +352,13 @@ app.post('/api/generate-affiliate-link', limit(20, 60000), async (req, res) => {
 
 // ---------------------------------------------------------------- websocket
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, maxPayload: 10 * 1024 * 1024 });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 10 * 1024 * 1024 });
+
+server.on('upgrade', (request, socket, head) => {
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.emit('connection', ws, request);
+  });
+});
 
 const RELAY_TYPES = new Set(['offer', 'answer', 'ice-candidate', 'e2e-key', 'e2e-msg', 'decline', 'end-session', 'text-notify']);
 const SMALL_PAYLOAD = 24000;

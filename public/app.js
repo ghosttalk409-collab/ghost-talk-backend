@@ -1,6 +1,12 @@
 import { E2E, sha256Hex } from './e2e.js';
 import { SecurityGuard } from './security.js';
 
+// Immediate boot check so you know the script ran
+console.log("[DEBUG] app.js loaded successfully.");
+
+document.addEventListener('DOMContentLoaded', () => {
+  console.log("[DEBUG] DOM fully loaded.");
+  // ... rest of your code ...
 document.addEventListener('DOMContentLoaded', () => {
   const $ = id => document.getElementById(id);
   const myIdentityInput = $('my-identity');

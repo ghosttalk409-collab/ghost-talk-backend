@@ -133,9 +133,9 @@ document.addEventListener('DOMContentLoaded', () => {
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }]
   };
 
-    const proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+  const proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
   const apiBase = window.location.origin;
-  const socketUrl = proto + window.location.host;
+  const socketUrl = `${proto}${window.location.host}`;
 
   const styleInject = document.createElement('style');
   styleInject.textContent = `

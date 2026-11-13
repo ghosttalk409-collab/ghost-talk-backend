@@ -222,7 +222,8 @@ document.addEventListener('DOMContentLoaded', () => {
     reconnectTimer = setTimeout(() => { reconnectTimer = null; initWebSocket(); }, timeout);
   }
 
-  function initWebSocket() {
+ 
+    function initWebSocket() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
 
@@ -236,7 +237,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     socket = ws;
 
+    // Guard against indefinite hanging in CONNECTING state during Render cold starts
+    const connectTimeout = setTimeout(() => {
+      if (ws.readyState === WebSocket.CONNECTING) {
+        logChat('[DEBUG] Connection timeout - closing stalled socket and retrying...');
+        try { ws.close(); } catch {}
+      }
+    }, 6000);
+
     ws.onopen = () => {
+      clearTimeout(connectTimeout);
       logChat('[DEBUG] Handshake OK! Registering...');
       statusBar.innerText = 'STATUS: ONLINE | END-TO-END ENCRYPTED';
       statusBar.classList.remove('offline');
@@ -253,6 +263,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     ws.onclose = event => {
+      clearTimeout(connectTimeout);
       if (socket !== ws) return;
       clearInterval(pingTimer);
       logChat(`[DEBUG] Closed -> Code: ${event.code} | Reason: "${event.reason || 'none'}"`);
@@ -262,6 +273,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     ws.onerror = () => {
+      clearTimeout(connectTimeout);
       logChat('[DEBUG] WebSocket error event triggered.');
       try { ws.close(); } catch {}
     };

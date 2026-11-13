@@ -1,4 +1,4 @@
-import { E2E, sha256Hex } from './e2ee.js';
+import { E2E, sha256Hex } from './e2e.js';
 import { SecurityGuard } from './security.js';
 
 document.addEventListener('DOMContentLoaded', () => {

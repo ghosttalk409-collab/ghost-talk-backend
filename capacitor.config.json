@@ -4,5 +4,10 @@
   "webDir": "public",
   "android": {
     "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    }
   }
 }

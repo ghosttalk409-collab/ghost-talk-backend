@@ -1,7 +1,6 @@
 import { E2E, sha256Hex } from './e2e.js';
 import { SecurityGuard } from './security.js';
 
-document.addEventListener('DOMContentLoaded', () => {
   window.__ghostBooted = true;          // index.html shows a clear error if this never happens
   const $ = id => document.getElementById(id);
   const myIdentityInput = $('my-identity');
@@ -112,9 +111,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let iceSendReady = false;
   let localIceBuffer = [];
 
-  async function sendSecure(addr, header, bytes) {
+  async function sendSecure(addr, header, bytes, wake) {
     const payload = await e2e.encrypt(addr, header, bytes);
-    safeSend({ type: 'e2e-msg', targetKey: addr, payload });
+    // `wake` marks a deliberate message/file: if the person is offline the server may send them a content-free alert.
+    safeSend({ type: 'e2e-msg', targetKey: addr, payload, ...(wake ? { wake } : {}) });
   }
   function resync(from) {
     const now = Date.now();
@@ -245,39 +245,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
+    return div;
   }
 
   const SAFE_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
   function logFileReceived(senderKey, fileName, bytes, mime) {
-    if (!chatBox) return;
-    const div = document.createElement('div');
-    div.style.margin = '6px 0';
-    const safeName = String(fileName || 'file').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 100);
-    const isImg = SAFE_IMAGE_MIME.has(mime);
-
-    const label = document.createElement('strong');
-    label.textContent = `${senderKey === 'Me' ? 'Me' : nameFor(senderKey)} ${isImg ? '[Image]' : '[File]'}: `;
-    div.appendChild(label);
-
-    // Always rebuilt from decrypted bytes with a type we choose, so remote content can never run as code.
-    const url = URL.createObjectURL(new Blob([bytes], { type: isImg ? mime : 'application/octet-stream' }));
-    objectUrls.push(url);
-    if (isImg) {
-      div.append(safeName, document.createElement('br'));
-      const img = document.createElement('img');
-      img.src = url;
-      img.style.cssText = 'max-width:150px;border-radius:4px;margin-top:4px;';
-      div.appendChild(img);
-    } else {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = safeName;
-      a.style.cssText = 'color:#c5a059;text-decoration:underline;';
-      a.textContent = `Download ${safeName}`;
-      div.appendChild(a);
-    }
-    chatBox.appendChild(div);
-    chatBox.scrollTop = chatBox.scrollHeight;
+    return logFileBubble({ mine: senderKey === 'Me', from: senderKey, name: fileName, bytes, mime });
   }
 
   // ------------------------------------------------------------ contacts
@@ -314,9 +287,548 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!ck) return null;
     if (!activeCallTarget || !isValidContact(activeCallTarget)) activeCallTarget = ck;
     else if (activeCallTarget !== ck) unread.set(ck, (unread.get(ck) || 0) + 1);
+    probeEnabled = true;
     renderContacts();
+    updatePresenceUI();
     return ck;
   }
+
+  // ------------------------------------------------------------ presence, typing, delivery ticks, file preview
+  const TYPING_SEND_EVERY = 3000, TYPING_STOP_AFTER = 5000, TYPING_SHOW_FOR = 6000;
+  const HEARTBEAT_EVERY = 25000, ONLINE_WINDOW = 70000;
+  const presence = new Map();     // contact key -> { online, lastSeen, typingUntil, probed, lastProbeAt }
+  const outgoing = new Map();     // message id -> { el, target, at, done }  (for delivery ticks)
+  const lastDecryptWarn = new Map();
+  let typingTarget = '', typingSentAt = 0, typingStopTimer = null;
+  let probeEnabled = true;
+  let uiSig = '';
+  const randomHex = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, '0')).join('');
+  const isMsgId = v => typeof v === 'string' && /^[a-f0-9]{8}$/.test(v);
+  const socketOpen = () => !!socket && socket.readyState === WebSocket.OPEN;
+  const fmtSize = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+  function agoText(ts) {
+    const sec = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (sec < 60) return 'just now';
+    const m = Math.round(sec / 60);
+    return m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
+  }
+
+  const featStyle = document.createElement('style');
+  featStyle.textContent = `
+    .peer-bar{display:none;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg-soft);font-size:12px;color:var(--muted)}
+    .peer-bar .pname{color:var(--gold-hi);font-weight:600}
+    .pdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#4a524f;flex:none;margin-right:6px}
+    .pdot.on{background:#3ddc84;box-shadow:0 0 0 3px rgba(61,220,132,.15)}
+    .ptyping{font-size:10px;color:var(--gold-hi);font-style:italic;margin-left:6px}
+    .typing{display:none;padding:2px 14px 6px;font-size:11px;color:var(--gold-hi);font-style:italic}
+    .typing i{display:inline-block;width:4px;height:4px;margin-left:3px;border-radius:50%;background:var(--gold-hi);animation:gtb 1.2s infinite}
+    .typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+    @keyframes gtb{0%,60%,100%{opacity:.25;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+    .tick{float:right;margin:4px 0 0 10px;font-size:10px;opacity:.65;font-style:normal;white-space:nowrap}
+    .tick.ok{opacity:1}.tick.bad{color:#ff6b6b;opacity:1}
+    .msg .fileimg{max-width:240px;max-height:240px;object-fit:cover;cursor:zoom-in}
+    .msg .cap{font-size:11px;opacity:.7;margin-top:4px;word-break:break-all}
+    .filecard{display:flex;align-items:center;gap:10px}
+    .filecard .ic{font-size:24px}
+    .filecard .fn{font-weight:600;word-break:break-all}
+    .gt-overlay{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;z-index:200;padding:16px}
+    .gt-sheet{background:var(--card-hi,#161b19);border:1px solid var(--line);border-radius:16px;padding:18px;max-width:420px;width:100%;display:flex;flex-direction:column;gap:12px;color:var(--text)}
+    .gt-sheet h4{font-family:var(--serif);font-weight:normal;font-size:16px;color:var(--gold-hi);margin:0}
+    .gt-preview{display:flex;align-items:center;justify-content:center;gap:10px;background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;min-height:110px;max-height:300px;overflow:hidden;padding:8px}
+    .gt-preview img{max-width:100%;max-height:280px;display:block;border-radius:8px}
+    .gt-info{font-size:12px;color:var(--muted);word-break:break-all}
+    .gt-err{font-size:12px;color:#ff6b6b;min-height:14px}
+    .gt-row{display:flex;gap:10px}.gt-row button{flex:1}
+    .gt-lightbox img{max-width:96vw;max-height:80vh;border-radius:10px;display:block}
+  `;
+  document.head.appendChild(featStyle);
+
+  const peerBar = document.createElement('div');
+  peerBar.id = 'peer-bar'; peerBar.className = 'peer-bar';
+  const typingEl = document.createElement('div');
+  typingEl.id = 'typing-indicator'; typingEl.className = 'typing';
+  {
+    const shell = chatBox.parentElement;
+    if (shell && shell.parentElement) shell.parentElement.insertBefore(peerBar, shell);
+    if (shell) shell.insertBefore(typingEl, chatBox.nextSibling);
+  }
+
+  function getP(ck) {
+    let p = presence.get(ck);
+    if (!p) { p = { online: false, lastSeen: 0, typingUntil: 0, probed: false, lastProbeAt: 0 }; presence.set(ck, p); }
+    return p;
+  }
+  const isOnline = ck => { const p = presence.get(ck); return !!p && p.online && Date.now() - p.lastSeen < ONLINE_WINDOW; };
+  const isTyping = ck => { const p = presence.get(ck); return !!p && p.typingUntil > Date.now(); };
+  function markSeen(from) {
+    const ck = contactKeyFor(from);
+    if (!ck) return null;
+    const p = getP(ck);
+    p.online = true; p.lastSeen = Date.now(); p.probed = true;
+    updatePresenceUI();
+    return ck;
+  }
+  function markOffline(ck) {
+    if (!ck) return;
+    const p = getP(ck);
+    p.online = false; p.probed = true; p.typingUntil = 0;
+    updatePresenceUI();
+  }
+
+  function updatePresenceUI() {
+    const ck = activeCallTarget && isValidContact(activeCallTarget) ? activeCallTarget : '';
+    const sig = ramContacts.map(c => `${c.key}:${isOnline(c.key) ? 1 : 0}:${isTyping(c.key) ? 1 : 0}`).join('|') + '#' + ck;
+    if (sig !== uiSig) { uiSig = sig; renderContacts(); }
+    if (!ck) { peerBar.style.display = 'none'; typingEl.style.display = 'none'; return; }
+
+    const c = ramContacts.find(x => x.key === ck);
+    const p = presence.get(ck);
+    const online = isOnline(ck);
+    peerBar.innerHTML = '';
+    const dot = document.createElement('span'); dot.className = 'pdot' + (online ? ' on' : '');
+    const nm = document.createElement('span'); nm.className = 'pname'; nm.textContent = c ? c.name : shortName(ck);
+    const st = document.createElement('span');
+    st.textContent = online ? 'Online'
+      : (p && p.lastSeen ? `Offline · last seen ${agoText(p.lastSeen)}` : (p && p.probed ? 'Offline' : 'Checking…'));
+    peerBar.append(dot, nm, st);
+    if (e2e.hasSession(ck)) { const lock = document.createElement('span'); lock.textContent = '🔒 End-to-end encrypted'; peerBar.appendChild(lock); }
+    peerBar.style.display = 'flex';
+
+    if (isTyping(ck)) {
+      typingEl.textContent = `${c ? c.name : 'Contact'} is typing`;
+      for (let i = 0; i < 3; i++) typingEl.appendChild(document.createElement('i'));
+      typingEl.style.display = 'block';
+    } else typingEl.style.display = 'none';
+  }
+  setInterval(updatePresenceUI, 5000);
+
+  // --- presence: tiny encrypted heartbeats, only between contacts that already share a secure session
+  async function pingPeer(addr, isReply) {
+    if (!socketOpen() || !e2e.hasSession(addr)) return;
+    try { await sendSecure(addr, { t: 'hb', r: isReply ? 1 : 0 }); } catch (e) { /* ignore */ }
+  }
+  async function probeContact(ck) {
+    if (!ck || !isValidContact(ck) || !probeEnabled) return;
+    if (e2e.hasSession(ck)) { pingPeer(ck, false); return; }
+    const p = getP(ck);
+    if (Date.now() - p.lastProbeAt < 15000) return;
+    p.lastProbeAt = Date.now();
+    let ok = false;
+    try { ok = await e2e.ensure(ck, 7000); } catch (e) { ok = false; }   // a handshake doubles as an "is online?" check
+    if (ok) { markSeen(ck); pingPeer(ck, false); } else markOffline(ck);
+  }
+  setInterval(() => {
+    ramContacts.slice(0, 20).forEach(c => { if (e2e.hasSession(c.key)) pingPeer(c.key, false); });
+    if (probeEnabled && activeCallTarget && isValidContact(activeCallTarget) && !e2e.hasSession(activeCallTarget)) probeContact(activeCallTarget);
+  }, HEARTBEAT_EVERY);
+
+  function selectContact(key) {
+    if (typingTarget && typingTarget !== key) stopTyping();
+    activeCallTarget = key;
+    unread.delete(key);
+    probeEnabled = true;
+    renderContacts();
+    updatePresenceUI();
+    probeContact(key);
+  }
+
+  // --- typing indicator (sent over the encrypted channel, so the server cannot see it)
+  function sendTyping(target, on) {
+    if (!target || !socketOpen() || !e2e.hasSession(target)) return;
+    sendSecure(target, { t: 'typing', on: on ? 1 : 0 }).catch(() => {});
+  }
+  function stopTyping() {
+    clearTimeout(typingStopTimer); typingStopTimer = null;
+    if (typingTarget) sendTyping(typingTarget, false);
+    typingTarget = ''; typingSentAt = 0;
+  }
+  chatInput.addEventListener('input', () => {
+    const target = activeCallTarget;
+    if (!target || !isValidContact(target)) return;
+    if (!chatInput.value.trim()) { stopTyping(); return; }
+    if (typingTarget && typingTarget !== target) stopTyping();
+    typingTarget = target;
+    const now = Date.now();
+    if (now - typingSentAt > TYPING_SEND_EVERY) { typingSentAt = now; sendTyping(target, true); }
+    clearTimeout(typingStopTimer);
+    typingStopTimer = setTimeout(stopTyping, TYPING_STOP_AFTER);
+  });
+
+  // --- delivery ticks: one tick = sent, two = the other person's app received it
+  function addTick(div, id, target, payload, waiting) {
+    const t = document.createElement('span');
+    t.className = 'tick'; t.textContent = '✓'; t.title = 'Sent';
+    div.appendChild(t);
+    const o = { el: t, target, at: Date.now(), done: false, payload: payload || null, waiting: false, until: 0 };
+    outgoing.set(id, o);
+    if (waiting && o.payload) { o.waiting = true; o.until = Date.now() + WAIT_MS; setTick(t, '⏳ alert sent', 'wait', 'Waiting for them to open the app'); }
+    setTimeout(() => outgoing.delete(id), 10 * 60 * 1000);
+  }
+  function setTick(el, text, cls, title) { el.textContent = text; el.className = 'tick ' + cls; el.title = title; }
+  function failPendingTo(ck) {
+    let n = 0; const now = Date.now();
+    outgoing.forEach(o => {
+      if (!o.done && !o.waiting && o.target === ck && now - o.at < 8000) { o.done = true; o.payload = null; setTick(o.el, '⚠ not delivered', 'bad', 'The contact was offline'); n++; }
+    });
+    return n;
+  }
+
+  // --- files and images: bubbles with real previews, a full-screen viewer and a confirm-before-send sheet
+  function logFileBubble({ mine, from, name, bytes, mime, id, target, payload, waiting }) {
+    const div = document.createElement('div');
+    div.className = mine ? 'msg me' : 'msg them';
+    if (!mine) { const who = document.createElement('span'); who.className = 'who'; who.textContent = nameFor(from); div.appendChild(who); }
+    const safeName = String(name || 'file').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 100);
+    const isImg = SAFE_IMAGE_MIME.has(mime);
+    // Always rebuilt from decrypted bytes with a type we choose, so remote content can never run as code.
+    const url = URL.createObjectURL(new Blob([bytes], { type: isImg ? mime : 'application/octet-stream' }));
+    objectUrls.push(url);
+    if (isImg) {
+      const img = document.createElement('img');
+      img.className = 'fileimg'; img.src = url; img.alt = safeName;
+      img.onclick = () => openLightbox(url, safeName);
+      div.appendChild(img);
+      const cap = document.createElement('div'); cap.className = 'cap'; cap.textContent = `${safeName} · ${fmtSize(bytes.length)}`;
+      div.appendChild(cap);
+    } else {
+      const card = document.createElement('div'); card.className = 'filecard';
+      const ic = document.createElement('span'); ic.className = 'ic'; ic.textContent = '📄';
+      const info = document.createElement('div');
+      const fn = document.createElement('div'); fn.className = 'fn'; fn.textContent = safeName;
+      const cap = document.createElement('div'); cap.className = 'cap'; cap.textContent = fmtSize(bytes.length) + ' · ';
+      const a = document.createElement('a'); a.href = url; a.download = safeName; a.textContent = 'Save';
+      cap.appendChild(a);
+      info.append(fn, cap);
+      card.append(ic, info);
+      div.appendChild(card);
+    }
+    if (mine && id) addTick(div, id, target, payload, waiting);
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+    return div;
+  }
+
+  function openLightbox(url, name) {
+    const ov = document.createElement('div'); ov.className = 'gt-overlay gt-lightbox';
+    const box = document.createElement('div'); box.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:12px;';
+    const img = document.createElement('img'); img.src = url; img.alt = name;
+    const row = document.createElement('div'); row.className = 'gt-row'; row.style.cssText = 'width:100%;max-width:320px;';
+    const save = document.createElement('button'); save.className = 'btn-secondary'; save.textContent = 'Save';
+    const close = document.createElement('button'); close.className = 'btn-green'; close.textContent = 'Close';
+    const onKey = e => { if (e.key === 'Escape') done(); };
+    const done = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
+    save.onclick = () => { const a = document.createElement('a'); a.href = url; a.download = name; a.click(); };
+    close.onclick = done;
+    ov.onclick = e => { if (e.target === ov) done(); };
+    document.addEventListener('keydown', onKey);
+    row.append(save, close); box.append(img, row); ov.appendChild(box);
+    document.body.appendChild(ov);
+  }
+
+  function showAttachPreview(file, bytes, target) {
+    const mime = String(file.type || 'application/octet-stream').slice(0, 100);
+    const isImg = SAFE_IMAGE_MIME.has(mime);
+    const name = String(file.name || 'file').slice(0, 200);
+    const previewUrl = URL.createObjectURL(new Blob([bytes], { type: isImg ? mime : 'application/octet-stream' }));
+
+    const ov = document.createElement('div'); ov.className = 'gt-overlay';
+    const sheet = document.createElement('div'); sheet.className = 'gt-sheet';
+    const h = document.createElement('h4'); h.textContent = isImg ? 'Send this photo?' : 'Send this file?';
+    const pv = document.createElement('div'); pv.className = 'gt-preview';
+    if (isImg) { const im = document.createElement('img'); im.src = previewUrl; im.alt = name; pv.appendChild(im); }
+    else { const ic = document.createElement('span'); ic.style.fontSize = '34px'; ic.textContent = '📄'; const nm = document.createElement('div'); nm.className = 'fn'; nm.textContent = name; pv.append(ic, nm); }
+    const info = document.createElement('div'); info.className = 'gt-info';
+    info.textContent = `${name} · ${fmtSize(bytes.length)}  →  to ${nameFor(target)} · 🔒 end-to-end encrypted`;
+    const err = document.createElement('div'); err.className = 'gt-err';
+    const row = document.createElement('div'); row.className = 'gt-row';
+    const cancel = document.createElement('button'); cancel.className = 'btn-secondary'; cancel.textContent = 'Cancel';
+    const send = document.createElement('button'); send.className = 'btn-green'; send.textContent = 'Send';
+    let busy = false;
+    const onKey = e => { if (e.key === 'Escape' && !busy) close(); };
+    const close = () => { ov.remove(); URL.revokeObjectURL(previewUrl); document.removeEventListener('keydown', onKey); };
+    cancel.onclick = () => { if (!busy) close(); };
+    ov.onclick = e => { if (e.target === ov && !busy) close(); };
+    send.onclick = async () => {
+      if (busy) return;
+      busy = true; send.disabled = true; cancel.disabled = true; send.textContent = 'Sending…'; err.textContent = '';
+      try {
+        const id = randomHex(4);
+        const header = { t: 'file', name, mime, id };
+        if (!(await e2e.ensure(target, 8000, { wake: 'msg' }))) {
+          if (isWaiting(target)) {          // they were sent a silent alert: keep the file here and deliver when they open the app
+            close();
+            logFileBubble({ mine: true, from: 'Me', name, bytes, mime, id, target, payload: { header, bytes }, waiting: true });
+            noteAlertSent(target, 1);
+            return;
+          }
+          throw new Error('offline');
+        }
+        await sendSecure(target, header, bytes, 'msg');
+        close();
+        logFileBubble({ mine: true, from: 'Me', name, bytes, mime, id, target, payload: { header, bytes } });
+      } catch (e) {
+        busy = false; send.disabled = false; cancel.disabled = false; send.textContent = 'Try again';
+        err.textContent = 'Could not send. Is your contact online?';
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    row.append(cancel, send);
+    sheet.append(h, pv, info, err, row);
+    ov.appendChild(sheet);
+    document.body.appendChild(ov);
+  }
+
+  function handlePickedFile(file) {
+    if (!file) return;
+    if (!isPremiumUser) { openPaymentModal('Encrypted file sharing is a Premium feature.'); return; }
+    const target = activeCallTarget;
+    if (!target || !isValidContact(target)) { alert('Select a contact first.'); return; }
+    if (file.size > 5 * 1024 * 1024) { alert('File size exceeds the 5MB limit.'); return; }
+    if (!file.size) { alert('That file is empty.'); return; }
+    const reader = new FileReader();
+    reader.onload = evt => showAttachPreview(file, new Uint8Array(evt.target.result), target);
+    reader.onerror = () => alert('Could not read that file.');
+    reader.readAsArrayBuffer(file);
+  }
+
+  // ------------------------------------------------------------ alerts, ringing, waiting for people to come back
+  const WAIT_MS = 120000;                       // matches the server: it remembers who tried to reach you for 2 minutes (RAM only)
+  const waitingFor = new Map();                 // contact -> time until which a silent alert is "in flight"
+  const alertNoted = new Map();
+  let pendingCall = null;                       // { target, video, until }
+  let callWantVideo = false;
+  const delivering = new Set();
+  const isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+  const pushPlugin = isNative && window.Capacitor.Plugins ? window.Capacitor.Plugins.PushNotifications : null;
+  let serverPush = false;                       // the server has phone alerts configured
+  let alertsServerOn = false;                   // this device's token is registered on the server
+  let alertsOn = localStorage.getItem('ghost_alerts') === '1';
+  let alertsSynced = false;
+  let pushListening = false;
+
+  const isWaiting = target => (waitingFor.get(contactKeyFor(target) || target) || 0) > Date.now();
+  function noteAlertSent(ck, n) {
+    if ((alertNoted.get(ck) || 0) > Date.now()) return;
+    alertNoted.set(ck, Date.now() + WAIT_MS);
+    logChat(`System: ${nameFor(ck)} is offline. A silent alert was sent (it contains no names or text). If they open Ghost Talk within 2 minutes, your ${n === 1 ? 'message is' : 'messages are'} delivered automatically.`);
+  }
+  function queueWaiting(ck) {
+    let n = 0; const now = Date.now();
+    outgoing.forEach(o => {
+      if (!o.done && !o.waiting && o.target === ck && o.payload && now - o.at < 8000) {
+        o.waiting = true; o.until = now + WAIT_MS;
+        setTick(o.el, '⏳ alert sent', 'wait', 'Waiting for them to open the app');
+        n++;
+      }
+    });
+    return n;
+  }
+  async function deliverWaiting(ck) {
+    if (delivering.has(ck)) return;
+    const items = [];
+    outgoing.forEach(o => { if (o.waiting && !o.done && o.target === ck && o.until > Date.now() && o.payload) items.push(o); });
+    waitingFor.delete(ck); alertNoted.delete(ck);
+    if (!items.length) return;
+    delivering.add(ck);
+    try {
+      e2e.drop(ck);                                              // they restarted the app: the old keys are gone
+      const ok = await e2e.ensure(ck, 12000);
+      if (!ok) { items.forEach(o => { o.waiting = false; o.done = true; o.payload = null; setTick(o.el, '⚠ not delivered', 'bad', 'Could not reach them'); }); return; }
+      for (const o of items) {
+        try {
+          await sendSecure(ck, o.payload.header, o.payload.bytes, undefined);
+          o.waiting = false; setTick(o.el, '✓', '', 'Sent');
+        } catch (e) { o.waiting = false; o.done = true; setTick(o.el, '⚠ not delivered', 'bad', 'Send failed'); }
+      }
+      logChat(`System: ${nameFor(ck)} opened the app. Your ${items.length === 1 ? 'message was' : 'messages were'} delivered.`);
+    } finally { delivering.delete(ck); }
+  }
+  function startWaitingCall(target, video) {
+    pendingCall = { target, video: !!video, until: Date.now() + WAIT_MS };
+    logChat(`System: ${nameFor(target)} is not in the app. A silent ring alert was sent. If they open Ghost Talk within 2 minutes, the call starts automatically. Press End to cancel.`);
+  }
+  function resumePendingCall(ck) {
+    const pc = pendingCall;
+    if (!pc || pc.target !== ck || pc.until < Date.now() || callState !== 'IDLE') return;
+    pendingCall = null;
+    e2e.drop(ck);
+    activeCallTarget = ck;
+    logChat(`System: ${nameFor(ck)} is online. Calling now...`);
+    startCall(pc.video);
+  }
+  setInterval(() => {                           // anything still waiting after 2 minutes: say so honestly
+    const now = Date.now();
+    outgoing.forEach(o => {
+      if (o.waiting && !o.done && o.until < now) { o.waiting = false; o.done = true; o.payload = null; setTick(o.el, '⚠ not delivered', 'bad', 'They did not open the app in time'); }
+    });
+    if (pendingCall && pendingCall.until < now) { logChat(`System: ${nameFor(pendingCall.target)} did not open the app, so the call was cancelled.`); pendingCall = null; }
+  }, 5000);
+
+  // --- sounds: an in-app ringtone for calls and a soft tone for messages (generated on the device, no audio files)
+  let audioCtx = null, ringTimer = null;
+  function ensureAudio() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      audioCtx = audioCtx || new AC();
+      if (audioCtx.state === 'suspended' && audioCtx.resume) audioCtx.resume();
+      return audioCtx;
+    } catch (e) { return null; }
+  }
+  function tone(freq, start, dur, vol) {
+    const ctx = ensureAudio();
+    if (!ctx) return;
+    try {
+      const o = ctx.createOscillator(), g = ctx.createGain(), t0 = ctx.currentTime + start;
+      o.type = 'sine'; o.frequency.value = freq;
+      g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(vol, t0 + 0.02); g.gain.linearRampToValueAtTime(0, t0 + dur);
+      o.connect(g); g.connect(ctx.destination); o.start(t0); o.stop(t0 + dur + 0.05);
+    } catch (e) { /* audio is optional */ }
+  }
+  function startRing() {
+    stopRing();
+    const cycle = () => {
+      tone(880, 0, 0.35, 0.2); tone(660, 0.4, 0.35, 0.2); tone(880, 1.2, 0.35, 0.2); tone(660, 1.6, 0.35, 0.2);
+      try { if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]); } catch (e) { /* not supported */ }
+    };
+    cycle();
+    ringTimer = setInterval(cycle, 3000);
+  }
+  function stopRing() {
+    if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
+    try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) { /* not supported */ }
+  }
+  document.addEventListener('click', () => ensureAudio(), { once: true });   // browsers only allow sound after a tap
+
+  // --- local notifications while the page is open but in the background (generic text only, never names or content)
+  const away = () => document.visibilityState === 'hidden' || (typeof document.hasFocus === 'function' && !document.hasFocus());
+  const baseTitle = document.title;
+  function notifyLocal(body) {
+    if (isNative || !away() || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    try { new Notification('Ghost Talk', { body, tag: 'gt-local', renotify: true }); } catch (e) { /* e.g. Android Chrome needs a service worker */ }
+  }
+  function announceIncoming() {
+    if (!away()) return;
+    tone(1046, 0, 0.12, 0.12); tone(1318, 0.14, 0.18, 0.12);
+    notifyLocal('New secure message');
+    document.title = '● New secure message';
+  }
+  const restoreTitle = () => { if (document.title !== baseTitle) document.title = baseTitle; };
+  window.addEventListener('focus', restoreTitle);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') restoreTitle(); });
+
+  // --- phone alerts (Android app): a silent, content-free wake-up. The message itself is never sent through the push service.
+  async function enableAlerts(silent) {
+    if (!pushPlugin) return false;
+    try {
+      let perm = await pushPlugin.checkPermissions();
+      if (perm.receive !== 'granted') perm = await pushPlugin.requestPermissions();
+      if (perm.receive !== 'granted') {
+        if (!silent) alert('Notifications are blocked. Allow them for Ghost Talk in your phone settings, then try again.');
+        return false;
+      }
+      if (pushPlugin.createChannel) {
+        await pushPlugin.createChannel({ id: 'ghost_calls', name: 'Incoming calls', description: 'Someone is trying to call you', importance: 5, visibility: 0, vibration: true });
+        await pushPlugin.createChannel({ id: 'ghost_msgs', name: 'New messages', description: 'Someone is trying to message you', importance: 4, visibility: 0, vibration: true });
+      }
+      if (!pushListening) {
+        pushListening = true;
+        pushPlugin.addListener('registration', t => { if (t && t.value) safeSend({ type: 'push-register', token: t.value }); });
+        pushPlugin.addListener('registrationError', () => logChat('System: Could not register this phone for alerts.'));
+        pushPlugin.addListener('pushNotificationActionPerformed', () => {   // tapping an alert opens the app; make sure we are connected
+          if (!socketOpen()) { reconnectAttempts = 0; initWebSocket(); }
+        });
+      }
+      await pushPlugin.register();
+      alertsOn = true;
+      localStorage.setItem('ghost_alerts', '1');
+      updateAlertsUI();
+      return true;
+    } catch (e) {
+      if (!silent) alert('Could not turn on alerts: ' + (e && e.message ? e.message : 'unknown error'));
+      return false;
+    }
+  }
+  async function disableAlerts() {
+    alertsOn = false;
+    localStorage.removeItem('ghost_alerts');
+    safeSend({ type: 'push-unregister' });        // the device token is deleted from our server
+    try { if (pushPlugin && pushPlugin.unregister) await pushPlugin.unregister(); } catch (e) { /* ignore */ }
+    updateAlertsUI();
+  }
+
+  const btnAlerts = document.createElement('button');
+  btnAlerts.id = 'btn-alerts'; btnAlerts.className = 'tier-badge'; btnAlerts.title = 'Alerts & privacy';
+  if (tierBadge && tierBadge.parentElement) tierBadge.parentElement.insertBefore(btnAlerts, tierBadge);
+  else document.body.appendChild(btnAlerts);
+  let alertsSheet = null;
+  function alertsStatusText() {
+    if (isNative) {
+      if (!alertsOn) return 'Alerts are OFF. You only receive messages and calls while the app is open.';
+      if (!serverPush) return 'Alerts are ON in this app, but the server has no alert service configured yet.';
+      return alertsServerOn ? 'Alerts are ON. You will be notified when someone tries to reach you.' : 'Turning alerts on…';
+    }
+    return 'Background alerts work in the Android app. In this browser you get a sound, a vibration and (if you allow it) a notification while the page is open.';
+  }
+  function updateAlertsUI() {
+    btnAlerts.textContent = (isNative ? alertsOn : (typeof Notification !== 'undefined' && Notification.permission === 'granted')) ? '🔔' : '🔕';
+    if (alertsSheet) alertsSheet.render();
+  }
+  function openAlertsSheet() {
+    const ov = document.createElement('div'); ov.className = 'gt-overlay';
+    const sheet = document.createElement('div'); sheet.className = 'gt-sheet';
+    const close = () => { ov.remove(); alertsSheet = null; document.removeEventListener('keydown', onKey); };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    ov.onclick = e => { if (e.target === ov) close(); };
+    document.addEventListener('keydown', onKey);
+    alertsSheet = {
+      render() {
+        sheet.innerHTML = '';
+        const h = document.createElement('h4'); h.textContent = 'Alerts & privacy';
+        const st = document.createElement('div'); st.className = 'gt-info'; st.textContent = alertsStatusText();
+        sheet.append(h, st);
+        const row = document.createElement('div'); row.className = 'gt-row';
+        if (isNative) {
+          const b = document.createElement('button');
+          b.className = alertsOn ? 'btn-secondary' : 'btn-green';
+          b.textContent = alertsOn ? 'Turn off alerts' : 'Turn on alerts';
+          b.onclick = () => (alertsOn ? disableAlerts() : enableAlerts(false));
+          row.appendChild(b);
+        } else if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+          const b = document.createElement('button'); b.className = 'btn-green'; b.textContent = 'Allow notifications on this page';
+          b.onclick = async () => { try { await Notification.requestPermission(); } catch (e) { /* ignore */ } updateAlertsUI(); };
+          row.appendChild(b);
+        }
+        sheet.appendChild(row);
+        const facts = document.createElement('ul'); facts.className = 'gt-facts';
+        [
+          'Messages, calls and files are end-to-end encrypted. Not even we can read them.',
+          'An alert only says “Incoming secure call” or “New secure message”. It never contains a name, text or key.',
+          'Your phone\'s push service can see that an alert reached your phone, but not who sent it or what it was.',
+          'Nothing is queued on our servers. The sender\'s app re-sends when you open the app (within 2 minutes), otherwise it is dropped.',
+          'Block anyone from the ⋮ menu on their contact: they can no longer message, call or alert you.',
+          'Turn alerts off any time. Your device token is then deleted from our server.'
+        ].forEach(t => { const li = document.createElement('li'); li.textContent = t; facts.appendChild(li); });
+        sheet.appendChild(facts);
+        const row2 = document.createElement('div'); row2.className = 'gt-row';
+        const ub = document.createElement('button'); ub.className = 'btn-secondary'; ub.textContent = 'Unblock everyone';
+        ub.onclick = () => { if (confirm('Allow everyone you blocked to contact you again?')) safeSend({ type: 'unblock-all' }); };
+        const cb = document.createElement('button'); cb.className = 'btn-green'; cb.textContent = 'Close'; cb.onclick = close;
+        row2.append(ub, cb);
+        sheet.appendChild(row2);
+      }
+    };
+    alertsSheet.render();
+    ov.appendChild(sheet);
+    document.body.appendChild(ov);
+  }
+  btnAlerts.onclick = openAlertsSheet;
+  {
+    const st = document.createElement('style');
+    st.textContent = `.tick.wait{opacity:1;color:var(--gold-hi)} .gt-facts{margin:0;padding-left:18px;font-size:12px;line-height:1.7;color:var(--text)} #btn-alerts{background:transparent;margin-right:6px}`;
+    document.head.appendChild(st);
+  }
+  updateAlertsUI();
 
   // ------------------------------------------------------------ websocket
   function safeSend(dataObj) {
@@ -412,6 +924,9 @@ document.addEventListener('DOMContentLoaded', () => {
         logChat('System: Registered on secure mesh.');
         applyUIPremiumState(msg.tier === 'PREMIUM', msg.expiresAt);
         applyHandle(msg.handle);
+        serverPush = !!msg.push;
+        if (alertsOn && pushPlugin && serverPush && !alertsSynced) { alertsSynced = true; enableAlerts(true); }
+        updateAlertsUI();
         break;
       case 'register-error':
         if (msg.reason === 'identity-taken') {
@@ -447,10 +962,43 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'error':
         logChat(`System: ${msg.message}`);
         break;
-      case 'peer-offline':
+      case 'peer-offline': {
+        const ck = contactKeyFor(msg.targetKey) || msg.targetKey;
+        if (msg.notified) waitingFor.set(ck, Date.now() + WAIT_MS);       // a silent alert went out: they may open the app soon
         if (msg.forType === 'e2e-key') e2e.peerOffline(msg.targetKey);
-        logChat('System: That contact is offline right now.');
-        if (callState === 'CALLING' && peerMatches(msg.targetKey)) endCall(false);
+        markOffline(ck);
+        if (msg.notified) {
+          const n = queueWaiting(ck);
+          if (n) noteAlertSent(ck, n);
+        } else {
+          const failed = failPendingTo(ck);
+          if (failed) logChat(`System: ${nameFor(ck)} is offline, so ${failed === 1 ? 'that message was' : 'those messages were'} not delivered. Nothing is stored on the server, so send it again when they are back.`);
+        }
+        // Only the call offer itself decides what happens to a call. The earlier setup messages (secure-channel
+        // handshake, SDP check) also come back as "offline"; reacting to them would end the call before the
+        // offer's reply could start the "ringing their phone" wait.
+        if (callState === 'CALLING' && peerMatches(msg.targetKey) && msg.forType === 'offer') {
+          const t = callPeer, video = callWantVideo;
+          endCall(false);
+          if (msg.notified) startWaitingCall(t, video);
+          else logChat(`System: ${nameFor(t)} is offline right now.`);
+        }
+        break;
+      }
+      case 'peer-online': {              // someone we tried to reach just opened the app
+        const ck = contactKeyFor(msg.senderKey);
+        if (!ck) break;
+        markSeen(ck);
+        deliverWaiting(ck);
+        resumePendingCall(ck);
+        break;
+      }
+      case 'push-registered':
+        alertsServerOn = !!msg.enabled;
+        updateAlertsUI();
+        break;
+      case 'blocked':
+        logChat(msg.count ? 'System: Blocked. They can no longer reach or alert you.' : 'System: Everyone is unblocked.');
         break;
       case 'text-notify':
         noteIncoming(msg.senderKey, 'Peer');
@@ -470,6 +1018,8 @@ document.addEventListener('DOMContentLoaded', () => {
         noteIncoming(msg.senderKey, 'Caller');
         if (callerIdText) callerIdText.textContent = `Secure ${msg.hasVideo ? 'video' : 'audio'} call from ${nameFor(msg.senderKey)}`;
         if (callModal) callModal.style.display = 'flex';
+        startRing();
+        notifyLocal('Incoming secure call');
         clearTimeout(ringTimeout);
         ringTimeout = setTimeout(() => { if (callState === 'RINGING') declineIncoming(); }, 45000);
         break;
@@ -513,7 +1063,11 @@ document.addEventListener('DOMContentLoaded', () => {
         let dec;
         try { dec = await e2e.decrypt(msg.senderKey, msg.payload); }
         catch (e) {
-          logChat(`System: A message from ${nameFor(msg.senderKey)} could not be verified and was discarded. Re-establishing the secure channel...`);
+          const nowW = Date.now();
+          if (nowW - (lastDecryptWarn.get(msg.senderKey) || 0) > 30000) {
+            lastDecryptWarn.set(msg.senderKey, nowW);
+            logChat(`System: A message from ${nameFor(msg.senderKey)} could not be verified and was discarded. Re-establishing the secure channel...`);
+          }
           resync(msg.senderKey);
           break;
         }
@@ -541,15 +1095,46 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function handleSecureContent(from, header, bytes) {
     switch (header.t) {
-      case 'chat':
+      case 'chat': {
         if (typeof header.text !== 'string') return;
         noteIncoming(from, 'Peer');
+        markSeen(from);
+        { const ck = contactKeyFor(from); if (ck) getP(ck).typingUntil = 0; }
         logChat(`${nameFor(from)}: ${header.text.slice(0, 4000)}`);
+        announceIncoming();
+        if (isMsgId(header.id)) sendSecure(from, { t: 'ack', id: header.id }).catch(() => {});   // tells the sender it arrived
+        updatePresenceUI();
         break;
-      case 'file':
+      }
+      case 'file': {
         if (bytes.length > 5 * 1024 * 1024) return;
         noteIncoming(from, 'Peer');
-        logFileReceived(from, header.name, bytes, typeof header.mime === 'string' ? header.mime : '');
+        markSeen(from);
+        { const ck = contactKeyFor(from); if (ck) getP(ck).typingUntil = 0; }
+        logFileBubble({ mine: false, from, name: header.name, bytes, mime: typeof header.mime === 'string' ? header.mime : '' });
+        announceIncoming();
+        if (isMsgId(header.id)) sendSecure(from, { t: 'ack', id: header.id }).catch(() => {});
+        updatePresenceUI();
+        break;
+      }
+      case 'ack': {
+        if (!isMsgId(header.id)) return;
+        const ck = markSeen(from);
+        const o = outgoing.get(header.id);
+        if (o && !o.done && ck && o.target === ck) { o.done = true; o.waiting = false; o.payload = null; setTick(o.el, '✓✓', 'ok', 'Delivered'); }
+        break;
+      }
+      case 'typing': {
+        const ck = markSeen(from);
+        if (!ck) return;
+        getP(ck).typingUntil = header.on ? Date.now() + TYPING_SHOW_FOR : 0;
+        updatePresenceUI();
+        if (header.on) setTimeout(updatePresenceUI, TYPING_SHOW_FOR + 300);
+        break;
+      }
+      case 'hb':
+        if (!markSeen(from)) return;            // only answer people in your contact list
+        if (!header.r) pingPeer(from, true);
         break;
       case 'sdp':
         if ((header.kind === 'offer' || header.kind === 'answer') && /^[a-f0-9]{64}$/.test(header.h || '')) {
@@ -637,9 +1222,12 @@ document.addEventListener('DOMContentLoaded', () => {
     callPeerAlias = '';
     pendingIceCandidates = [];
 
+    callWantVideo = wantVideo;
     logChat('System: Securing the call...');
-    if (!(await e2e.ensure(callPeer))) {
+    if (!(await e2e.ensure(callPeer, 8000, { wake: 'call' }))) {
+      const t = callPeer;
       resetCallState();
+      if (isWaiting(t)) { startWaitingCall(t, wantVideo); return; }
       alert('Could not open a secure channel. Is the contact online?');
       return;
     }
@@ -683,6 +1271,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const msg = incomingOffer;
     if (!msg || callState !== 'RINGING') return;
     clearTimeout(ringTimeout);
+    stopRing();
     if (callModal) callModal.style.display = 'none';
 
     try {
@@ -740,6 +1329,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   function resetCallState() {
     clearTimeout(ringTimeout);
+    stopRing();
     stopLocalMedia();
     callState = 'IDLE';
     callPeer = '';
@@ -768,7 +1358,9 @@ document.addEventListener('DOMContentLoaded', () => {
     callControls.style.display = 'none';
     if (clearChat) {
       chatBox.innerHTML = ''; chatInput.value = '';
-      if (peer) e2e.drop(peer);                       // forget this conversation's keys
+      if (peer) { e2e.drop(peer); presence.delete(contactKeyFor(peer) || peer); }   // forget this conversation's keys
+      stopTyping(); outgoing.clear(); waitingFor.clear(); probeEnabled = false;   // no background re-connecting after you end a session
+    pendingCall = null;
       objectUrls.splice(0).forEach(u => URL.revokeObjectURL(u));
     }
     if (btnToggleMic) btnToggleMic.innerText = '🎙️ Mic On';
@@ -813,15 +1405,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const target = activeCallTarget;
     if (!text || !target || !isValidContact(target)) return;
     chatInput.value = '';
+    stopTyping();
+    probeEnabled = true;
     btnSend.disabled = true;
     try {
-      if (!(await e2e.ensure(target))) {
+      const id = randomHex(4);
+      const header = { t: 'chat', text, id };
+      if (!(await e2e.ensure(target, 8000, { wake: 'msg' }))) {
+        if (isWaiting(target)) {            // silent alert sent: keep the message here and deliver it when they open the app
+          addTick(logChat(`Me: ${text}`), id, target, { header }, true);
+          noteAlertSent(target, 1);
+          return;
+        }
         logChat('System: Could not open a secure channel. Is the contact online?');
         chatInput.value = text;
+        markOffline(target);
         return;
       }
-      await sendSecure(target, { t: 'chat', text });
-      logChat(`Me: ${text}`);
+      await sendSecure(target, header, undefined, 'msg');
+      addTick(logChat(`Me: ${text}`), id, target, { header });
     } catch (e) {
       logChat('System: Message not sent (secure channel error).');
       chatInput.value = text;
@@ -837,26 +1439,25 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!activeCallTarget || !isValidContact(activeCallTarget)) { alert('Select a contact first.'); return; }
       fileInput.click();
     };
+    // Choosing a file only opens a preview; nothing is sent until you press Send.
     fileInput.onchange = e => {
-      const file = e.target.files[0];
-      if (!file) return;
-      if (file.size > 5 * 1024 * 1024) { alert('File size exceeds the 5MB limit.'); fileInput.value = ''; return; }
-      const target = activeCallTarget;
-      const reader = new FileReader();
-      reader.onload = async evt => {
-        fileInput.value = '';
-        try {
-          if (!(await e2e.ensure(target))) { logChat('System: Could not open a secure channel. Is the contact online?'); return; }
-          await sendSecure(target,
-            { t: 'file', name: file.name.slice(0, 200), mime: (file.type || 'application/octet-stream').slice(0, 100) },
-            new Uint8Array(evt.target.result));
-          logChat(`Me [File]: ${file.name}`);
-        } catch (e) {
-          logChat('System: File not sent (secure channel error or file too large).');
-        }
-      };
-      reader.readAsArrayBuffer(file);
+      const file = e.target.files && e.target.files[0];
+      handlePickedFile(file);
+      fileInput.value = '';
     };
+  }
+  chatInput.addEventListener('paste', e => {
+    const f = e.clipboardData && e.clipboardData.files && e.clipboardData.files[0];
+    if (f && f.type && f.type.startsWith('image/')) { e.preventDefault(); handlePickedFile(f); }
+  });
+  {
+    const dropZone = chatBox.parentElement || chatBox;
+    dropZone.addEventListener('dragover', e => e.preventDefault());
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) handlePickedFile(f);
+    });
   }
 
   // ------------------------------------------------------------ contacts UI
@@ -871,7 +1472,9 @@ document.addEventListener('DOMContentLoaded', () => {
     ramContacts.push({ name, key });
     contactNameInput.value = '';
     contactKeyInput.value = '';
+    probeEnabled = true;
     renderContacts();
+    probeContact(key);          // finds out right away whether they are online
   };
 
   function renderContacts() {
@@ -889,8 +1492,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const infoDiv = document.createElement('div');
       infoDiv.className = 'info';
       const badge = unread.get(c.key) ? ` <span class="unread">${unread.get(c.key)} new</span>` : '';
-      infoDiv.innerHTML = `<div class="name">${escapeHTML(c.name)}${badge}</div><div class="key">${escapeHTML(c.key)}</div>`;
-      infoDiv.onclick = () => { activeCallTarget = c.key; unread.delete(c.key); renderContacts(); };
+      const typingTxt = isTyping(c.key) ? ' <span class="ptyping">typing…</span>' : '';
+      infoDiv.innerHTML = `<div class="name"><span class="pdot${isOnline(c.key) ? ' on' : ''}"></span>${escapeHTML(c.name)}${typingTxt}${badge}</div><div class="key">${escapeHTML(c.key)}</div>`;
+      infoDiv.onclick = () => selectContact(c.key);
 
       const menuContainer = document.createElement('div');
       menuContainer.className = 'menu-container';
@@ -919,9 +1523,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (confirm(`Delete contact ${c.name}?`)) {
           e2e.drop(c.key);
           unread.delete(c.key);
+          presence.delete(c.key);
           ramContacts.splice(idx, 1);
-          if (activeCallTarget === c.key) activeCallTarget = '';
+          if (activeCallTarget === c.key) { stopTyping(); activeCallTarget = ''; }
           renderContacts();
+          updatePresenceUI();
         }
       };
       dotBtn.onclick = e => {
@@ -930,7 +1536,24 @@ document.addEventListener('DOMContentLoaded', () => {
         dropdownMenu.classList.toggle('show');
       };
 
-      dropdownMenu.append(renameItem, deleteItem);
+      const blockItem = document.createElement('button');
+      blockItem.className = 'dropdown-item';
+      blockItem.textContent = '🚫 Block';
+      blockItem.onclick = e => {
+        e.stopPropagation();
+        dropdownMenu.classList.remove('show');
+        if (!confirm(`Block ${c.name}? They will no longer be able to message, call or alert you.`)) return;
+        safeSend({ type: 'block', targetKey: c.key });
+        e2e.drop(c.key);
+        unread.delete(c.key);
+        presence.delete(c.key);
+        const i = ramContacts.findIndex(x => x.key === c.key);
+        if (i >= 0) ramContacts.splice(i, 1);
+        if (activeCallTarget === c.key) { stopTyping(); activeCallTarget = ''; }
+        renderContacts();
+        updatePresenceUI();
+      };
+      dropdownMenu.append(renameItem, blockItem, deleteItem);
       menuContainer.append(dotBtn, dropdownMenu);
       card.append(infoDiv, menuContainer);
       contactsListContainer.appendChild(card);
@@ -1144,10 +1767,13 @@ document.addEventListener('DOMContentLoaded', () => {
     e2e.wipe();
     ramContacts = [];
     activeCallTarget = '';
+    presence.clear(); outgoing.clear(); lastDecryptWarn.clear(); waitingFor.clear(); pendingCall = null; stopRing();
     renderContacts();
+    updatePresenceUI();
     logChat('System: Contacts, chat and encryption keys erased from memory.');
   };
 
   renderContacts();
+  updatePresenceUI();
   initWebSocket();
 });

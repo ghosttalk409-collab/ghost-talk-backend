@@ -14,6 +14,8 @@
  *   ALLOWED_ORIGINS       optional, comma list of frontend origins for CORS
  *   TURN_URLS / TURN_USERNAME / TURN_CREDENTIAL   optional TURN relay for calls
  *   KEEP_ALIVE=false      disables the self-ping that fights Render's 15 min sleep
+ *   FIREBASE_SERVICE_ACCOUNT  optional: Firebase service-account JSON (or base64 of it) to enable wake-up push alerts
+ *                         for the Android app. Alerts never contain names or message text.
  */
 const http = require('http');
 const express = require('express');
@@ -607,6 +609,108 @@ app.get('/affiliate-registry', limit(60, 60000), (req, res) => {
 </div></div></body></html>`);
 });
 
+// ---------------------------------------------------------------- wake-up push (Android app, optional)
+// A push only says "Incoming secure call" / "New secure message". It carries no names, no text, no keys.
+// The server stays memory-only: it remembers WHO tried to reach an offline user for 2 minutes (RAM) so those
+// senders' apps can deliver automatically once the user opens the app. Nothing else is stored or queued.
+let fcm = null;
+(function initFcm() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!raw) return;
+  try {
+    const txt = raw.trim().startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8');
+    const j = JSON.parse(txt);
+    if (!j.project_id || !j.client_email || !j.private_key) throw new Error('missing fields');
+    fcm = { projectId: j.project_id, clientEmail: j.client_email, privateKey: j.private_key };
+    console.log('Push alerts: enabled');
+  } catch (e) { console.warn('FIREBASE_SERVICE_ACCOUNT is invalid, push alerts disabled:', e.message); }
+})();
+const b64u = b => Buffer.from(b).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+let fcmTok = { value: '', exp: 0 };
+async function fcmAccessToken() {
+  if (fcmTok.value && Date.now() < fcmTok.exp - 60000) return fcmTok.value;
+  const iat = Math.floor(Date.now() / 1000);
+  const head = b64u(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const claim = b64u(JSON.stringify({ iss: fcm.clientEmail, scope: 'https://www.googleapis.com/auth/firebase.messaging', aud: 'https://oauth2.googleapis.com/token', iat, exp: iat + 3600 }));
+  const sig = b64u(crypto.createSign('RSA-SHA256').update(head + '.' + claim).sign(fcm.privateKey));
+  const r = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: `${head}.${claim}.${sig}` }),
+    signal: AbortSignal.timeout(10000)
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!j.access_token) throw new Error('Firebase auth failed (HTTP ' + r.status + ')');
+  fcmTok = { value: j.access_token, exp: Date.now() + (j.expires_in || 3600) * 1000 };
+  return fcmTok.value;
+}
+async function fcmPush(token, kind) {
+  const call = kind === 'call';
+  const r = await fetch(`https://fcm.googleapis.com/v1/projects/${fcm.projectId}/messages:send`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + await fcmAccessToken(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: {
+      token,
+      notification: { title: 'Ghost Talk', body: call ? 'Incoming secure call' : 'New secure message' },
+      data: { kind },
+      android: { priority: 'HIGH', ttl: call ? '45s' : '120s',
+        notification: { channel_id: call ? 'ghost_calls' : 'ghost_msgs', sound: 'default', visibility: 'PRIVATE', tag: 'gt-' + kind } }
+    } }),
+    signal: AbortSignal.timeout(10000)
+  });
+  if (r.ok) return 'ok';
+  const t = await r.text().catch(() => '');
+  if (r.status === 404 || /UNREGISTERED|INVALID_ARGUMENT/.test(t)) return 'unregistered';
+  throw new Error('FCM HTTP ' + r.status);
+}
+
+const wakeWaiters = new Map();   // target account -> Map(sender account -> expiry)   (RAM only, 2 minutes)
+const lastPush = new Map();      // target account -> { msg, call, day, n }
+const pairHits = new Map();      // `${target}|${sender}` -> { t0, n }: one sender can only alert one person a few times per hour
+const isBlocked = (targetKey, senderKey) => {
+  const acc = db.accounts[targetKey];
+  return !!(acc && Array.isArray(acc.blocked) && senderKey && acc.blocked.includes(sha256(senderKey)));
+};
+const WAKE_TTL = 120000;
+/** Called when a user-initiated message/call/handshake finds its target offline. Returns true if the target has been (or was just) alerted. */
+function maybeWake(targetKey, senderKey, kind) {
+  const acc = db.accounts[targetKey];
+  if (!fcm || !acc || !acc.push || !acc.push.token) return false;
+  const now = Date.now();
+  const lp = lastPush.get(targetKey) || { msg: 0, call: 0, day: now, n: 0 };
+  if (now - lp.day > DAY) { lp.day = now; lp.n = 0; }
+  if (lp.n >= 100) return false;                                  // hard daily cap: nobody can be spammed
+  const pk = targetKey + '|' + senderKey;
+  let ph = pairHits.get(pk);
+  if (!ph || now - ph.t0 > 3600000) ph = { t0: now, n: 0 };
+  if (ph.n >= 6) return false;                                    // the same person cannot keep pinging you
+  const gap = kind === 'call' ? 8000 : 20000;
+  if (now - lp[kind] >= gap) {
+    lp[kind] = now; lp.n++;
+    ph.n++; pairHits.set(pk, ph);
+    lastPush.set(targetKey, lp);
+    fcmPush(acc.push.token, kind).then(res => {
+      if (res === 'unregistered') { delete acc.push; scheduleSave(); }
+    }).catch(e => console.warn('Push failed:', e.message));
+  } else lastPush.set(targetKey, lp);                             // already alerted a moment ago: just wait for them
+  let m = wakeWaiters.get(targetKey);
+  if (!m) { m = new Map(); wakeWaiters.set(targetKey, m); }
+  m.set(senderKey, now + WAKE_TTL);
+  return true;
+}
+function announceOnline(key) {
+  const m = wakeWaiters.get(key);
+  if (!m) return;
+  wakeWaiters.delete(key);
+  const now = Date.now();
+  for (const [senderKey, exp] of m) if (exp > now) send(clients.get(senderKey), { type: 'peer-online', senderKey: displayName(key) });
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, m] of wakeWaiters) { for (const [s, exp] of m) if (exp <= now) m.delete(s); if (!m.size) wakeWaiters.delete(k); }
+  for (const [k, v] of lastPush) if (now - v.day > 2 * DAY) lastPush.delete(k);
+  for (const [k, v] of pairHits) if (now - v.t0 > 3600000) pairHits.delete(k);
+}, 60000).unref();
+
 // ---------------------------------------------------------------- websocket
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, maxPayload: 10 * 1024 * 1024 });
@@ -625,9 +729,17 @@ function relay(ws, data) {
   const senderKey = ws.isAdmin ? null : ws.accountKey;
   const senderTier = ws.isAdmin ? 'PREMIUM' : tierOf(db.accounts[senderKey]);
   const targetKey = resolveAddress(data.targetKey);
+  if (targetKey && senderKey && isBlocked(targetKey, senderKey)) {   // blocked: looks exactly like "offline", never alerts
+    send(ws, { type: 'peer-offline', targetKey: data.targetKey, forType: type });
+    return;
+  }
   const targetWs = targetKey && clients.get(targetKey);
   if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
-    send(ws, { type: 'peer-offline', targetKey: data.targetKey, forType: type });
+    // Only deliberate, user-initiated traffic may wake someone (never heartbeats, typing or receipts).
+    const kind = type === 'offer' ? 'call'
+      : (['e2e-key', 'e2e-msg', 'e2e-file'].includes(type) && (data.wake === 'msg' || data.wake === 'call')) ? data.wake : null;
+    const notified = !!(kind && targetKey && !ws.isAdmin && maybeWake(targetKey, senderKey, kind));
+    send(ws, { type: 'peer-offline', targetKey: data.targetKey, forType: type, ...(notified ? { notified: true } : {}) });
     return;
   }
 
@@ -692,7 +804,7 @@ function handleMessage(ws, data) {
       adminWs = ws; ws.isAdmin = true;
       send(ws, {
         type: 'admin-authenticated', pricing: planPricing, storage: storageMode,
-        config: { paymentsKey: !!NOWPAYMENTS_API_KEY, ipnSecret: !!NOWPAYMENTS_IPN_KEY, webhookUrl: `${PUBLIC_URL}/api/nowpayments-webhook`, publicUrl: PUBLIC_URL }
+        config: { push: !!fcm, paymentsKey: !!NOWPAYMENTS_API_KEY, ipnSecret: !!NOWPAYMENTS_IPN_KEY, webhookUrl: `${PUBLIC_URL}/api/nowpayments-webhook`, publicUrl: PUBLIC_URL }
       });
       broadcastAdminMetrics();
     } else {
@@ -761,12 +873,50 @@ function handleMessage(ws, data) {
     if (old && old !== ws) { send(old, { type: 'replaced' }); old.accountKey = null; old.close(4000, 'replaced'); }
     ws.accountKey = key;
     clients.set(key, ws);
-    send(ws, { type: 'registered', key, ...accountStatus(key) });
+    send(ws, { type: 'registered', key, push: !!fcm, ...accountStatus(key) });
+    announceOnline(key);                        // lets people who tried to reach you deliver automatically
     queueAdminMetrics();
     return;
   }
 
   if (!ws.accountKey && !ws.isAdmin) return; // everything below needs an authenticated socket
+
+  if (type === 'push-register') {
+    const acc = ws.accountKey && db.accounts[ws.accountKey];
+    if (!acc || !fcm || !isStr(data.token, 4096) || data.token.length < 20) return;
+    acc.push = { token: data.token, at: Date.now() };
+    scheduleSave();
+    send(ws, { type: 'push-registered', enabled: true });
+    return;
+  }
+  if (type === 'block') {
+    const acc = ws.accountKey && db.accounts[ws.accountKey];
+    const who = acc && resolveAddress(data.targetKey);
+    if (!acc || !who || who === ws.accountKey) return;
+    acc.blocked = Array.isArray(acc.blocked) ? acc.blocked : [];
+    const h = sha256(who);                       // only a hash is kept: the list cannot be read back as names
+    if (!acc.blocked.includes(h) && acc.blocked.length < 500) acc.blocked.push(h);
+    const m = wakeWaiters.get(ws.accountKey); if (m) m.delete(who);
+    scheduleSave();
+    send(ws, { type: 'blocked', count: acc.blocked.length });
+    return;
+  }
+  if (type === 'unblock-all') {
+    const acc = ws.accountKey && db.accounts[ws.accountKey];
+    if (!acc) return;
+    delete acc.blocked;
+    scheduleSave();
+    send(ws, { type: 'blocked', count: 0 });
+    return;
+  }
+  if (type === 'push-unregister') {
+    const acc = ws.accountKey && db.accounts[ws.accountKey];
+    if (!acc) return;
+    delete acc.push;
+    scheduleSave();
+    send(ws, { type: 'push-registered', enabled: false });
+    return;
+  }
 
   if (type === 'get-status') {
     if (ws.accountKey) notifyTier(ws.accountKey);

@@ -3,7 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ghost Talk — Sovereign Communication Protocol</title>
+  <title>Ghost Talk — Private, Encrypted, No Trace Messaging</title>
+  <meta name="description" content="End-to-end encrypted chat, calls and file sharing with no sign-up and no stored messages.">
+  <meta name="theme-color" content="#0e1110">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="manifest" href="/manifest.json">
   <style>
     :root {
       --bg-deep: #0e1110;
@@ -114,6 +118,20 @@
       background: rgba(197, 160, 89, 0.1);
       transform: translateY(-1px);
     }
+
+
+    /* Plans */
+    .plans { display: grid; gap: 16px; grid-template-columns: 1fr; max-width: 720px; width: 100%; margin: 0 auto 40px auto; text-align: left; }
+    @media (min-width: 640px) { .plans { grid-template-columns: 1fr 1fr; } }
+    .plan { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 26px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
+    .plan.premium { border-color: var(--accent-gold); background: linear-gradient(180deg, rgba(197,160,89,0.10), var(--bg-card)); }
+    .plan h3 { font-family: Georgia, serif; font-size: 18px; color: var(--accent-gold); margin-bottom: 4px; font-weight: normal; letter-spacing: .5px; }
+    .plan .price { font-family: Georgia, serif; font-size: 30px; color: var(--text-main); margin: 6px 0 14px; }
+    .plan .price small { font-size: 13px; color: var(--text-muted); font-family: sans-serif; }
+    .plan ul { list-style: none; display: grid; gap: 9px; font-size: 14px; color: var(--text-muted); margin-bottom: 20px; }
+    .plan li::before { content: '✦'; color: var(--accent-gold); margin-right: 10px; }
+    .plan .btn { width: 100%; }
+    .plan-note { font-size: 12px; color: var(--text-muted); text-align: center; margin: -22px auto 40px; max-width: 520px; line-height: 1.6; }
 
     /* Interactive Info Tabs Container */
     .info-card {
@@ -254,16 +272,45 @@
 <body>
 
   <div class="hero-container">
-    <div class="brand-kicker">❖ GHOST TALK — Sovereign Communication Protocol</div>
+    <div class="brand-kicker">❖ GHOST TALK — Private Communication</div>
     <h1>Absolute Privacy, <span>Without Compromise</span></h1>
     <p class="subtitle">
-      A peer-to-peer encrypted sanctuary for private discourse, secure voice links, and direct media streaming. Entirely decentralized, leaving no trace upon the digital landscape.
+      A private, end-to-end encrypted space for messages, calls and files. No sign-up, no phone number, no email. Nothing is stored once you close the app.
     </p>
 
     <div class="cta-group">
       <a href="/app" class="btn btn-primary">Launch Secure Web App</a>
       <a href="/download-apk" class="btn btn-secondary">Download Android APK</a>
     </div>
+
+
+    <!-- Plans -->
+    <div class="plans">
+      <div class="plan">
+        <h3>Free</h3>
+        <div class="price">$0</div>
+        <ul>
+          <li>End-to-end encrypted chat</li>
+          <li>Encrypted voice calls</li>
+          <li>No sign-up, no email, no phone number</li>
+          <li>Nothing stored once you close the app</li>
+        </ul>
+        <a href="/app" class="btn btn-secondary">Start free</a>
+      </div>
+      <div class="plan premium">
+        <h3>Premium</h3>
+        <div class="price"><span id="price-monthly">$9.99</span> <small>/ month</small></div>
+        <ul>
+          <li>Everything in Free</li>
+          <li>Encrypted video calls</li>
+          <li>Encrypted file and photo sharing</li>
+          <li>Your own handle: GHOST-YOURNAME</li>
+          <li>Pay with crypto: no name, no card</li>
+        </ul>
+        <a href="/app" class="btn btn-primary">Get Premium</a>
+      </div>
+    </div>
+    <div class="plan-note">Yearly plan: <span id="price-yearly">$89.99</span> <span id="price-save"></span>. Premium activates automatically after your payment is confirmed on the network.</div>
 
     <!-- Interactive Information Card -->
     <div class="info-card" style="margin: 0 auto;">
@@ -275,23 +322,23 @@
 
       <div id="tab-ram" class="tab-content active">
         <h3>Zero-Trace Memory State</h3>
-        <p>Messages and shared files are relayed through the server in memory only and are never written to disk or a database. To make accounts and subscriptions work, we store a minimal record: your anonymous Ghost ID, a one-way hash of your device secret, your plan status and expiry, and your optional custom handle.</p>
+        <p>Messages, files and call setup are end-to-end encrypted on your device before they leave it. Our server only relays unreadable ciphertext in memory: it never stores message content, and nothing is written to disk once a chat ends. To make accounts and subscriptions work we keep a minimal record: your anonymous Ghost ID, a one-way hash of your device secret, your plan status and expiry, and your optional custom handle.</p>
       </div>
 
       <div id="tab-p2p" class="tab-content">
         <h3>Sovereign Peer Routing</h3>
-        <p>Voice and video calls flow directly between peers over encrypted WebRTC connections, with the server acting only as the signaling handshake. Text messages and files are relayed through our server over TLS.</p>
+        <p>Voice and video calls flow directly between peers over encrypted WebRTC connections, and the server only helps them find each other. Text and files are encrypted end to end and relayed as ciphertext, so even we cannot read them.</p>
       </div>
 
       <div id="tab-ephemeral" class="tab-content">
         <h3>Cryptographic Isolation</h3>
-        <p>Engineered with Old Money discretion. Custom handle verification, no message logging, and strict payload ceilings keep your conversations private across both web clients and compiled APK runtimes.</p>
+        <p>Engineered with Old Money discretion. Every chat uses fresh keys that exist only in memory (ECDH P-256 with AES-256-GCM). Compare the security code with your contact to confirm nobody is intercepting. When you end a session the chat and its keys are erased from your device. Optional alerts wake your phone with a generic, content-free ping; messages and calls are never sent through the push service, and you can block anyone from reaching you.</p>
       </div>
     </div>
   </div>
 
   <footer>
-    <div>© 2026 Ghost Talk Protocol. Sovereign & Decentralized.</div>
+    <div>© 2026 Ghost Talk. Private &amp; encrypted.</div>
     <div>
       <a onclick="openModal('tos-modal')">Terms of Service</a> &bull; 
       <a onclick="openModal('privacy-modal')">Privacy Policy</a>
@@ -303,8 +350,8 @@
     <div class="modal-content">
       <button class="close-modal" onclick="closeModal('tos-modal')">&times;</button>
       <h2>Terms of Service</h2>
-      <p>Ghost Talk is provided as an open sovereign communication tool operating strictly on a peer-to-peer basis.</p>
-      <p>Users retain sole responsibility for their operational security, key management, and data exchanges. We do not keep message logs or call records.</p>
+      <p>Ghost Talk is a private, end-to-end encrypted messaging and calling service.</p>
+      <p>You are responsible for your own device security and for how you use the service. You may not use Ghost Talk for anything unlawful, to harass others, or to abuse the service, and we may suspend accounts that do. Premium passes are paid in cryptocurrency and are generally non-refundable. We do not keep message logs or call records.</p>
     </div>
   </div>
 
@@ -313,7 +360,7 @@
     <div class="modal-content">
       <button class="close-modal" onclick="closeModal('privacy-modal')">&times;</button>
       <h2>Privacy Policy</h2>
-      <p>We do not store message content, call content or files. We keep only an anonymous account record (Ghost ID, hashed device secret, plan status and expiry, optional handle, sign-up time and, if you arrived through a partner link, its campaign code). Payments are processed by NOWPayments; we receive only a payment confirmation.</p>
+      <p>Message content, call content and files are end-to-end encrypted and are never stored on our servers. We keep only an anonymous account record (Ghost ID, hashed device secret, plan status and expiry, optional handle, sign-up time and, if you arrived through a partner link, its campaign code). Payments are processed by NOWPayments; we receive only a payment confirmation. Like any online service, our hosting provider can see network-level information such as IP addresses of connections, and calls between two people connect directly unless a relay is used. <strong>Optional alerts (Android app):</strong> if you turn them on we keep your phone's push token until you turn them off. An alert only says "New secure message" or "Incoming secure call" and never contains a name, text or key; Google's push service can see that an alert reached your phone, not who sent it or what it was. So that a sender's app can deliver once you open the app, our server remembers in memory only, for 2 minutes, which Ghost IDs tried to reach you; nothing is queued. If you block someone we store only a one-way hash of their ID so they can no longer message, call or alert you.</p>
       <p>No cookies, no tracking pixels, and no third-party telemetry are integrated into the Ghost Talk ecosystem.</p>
     </div>
   </div>
@@ -326,6 +373,16 @@
         document.querySelectorAll('a[href="/app"]').forEach(a => { a.href = '/app?ref=' + encodeURIComponent(ref); });
       }
     })();
+
+
+    // Show the live prices from the server (the admin dashboard controls them).
+    fetch('/api/payment-info').then(r => r.json()).then(d => {
+      const m = Number(d.pricing.monthly), y = Number(d.pricing.yearly);
+      document.getElementById('price-monthly').textContent = '$' + m.toFixed(2);
+      document.getElementById('price-yearly').textContent = '$' + y.toFixed(2);
+      const pct = Math.round((1 - y / (m * 12)) * 100);
+      if (pct > 0) document.getElementById('price-save').textContent = '(save ' + pct + '%)';
+    }).catch(() => {});
 
     function switchTab(evt, tabId) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));

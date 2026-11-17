@@ -1,6 +1,7 @@
 import { E2E, sha256Hex } from './e2e.js';
 import { SecurityGuard } from './security.js';
 
+document.addEventListener('DOMContentLoaded', () => {
   window.__ghostBooted = true;          // index.html shows a clear error if this never happens
   const $ = id => document.getElementById(id);
   const myIdentityInput = $('my-identity');
@@ -250,7 +251,7 @@ import { SecurityGuard } from './security.js';
 
   const SAFE_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
   function logFileReceived(senderKey, fileName, bytes, mime) {
-    return logFileBubble({ mine: senderKey === 'Me', from: senderKey, name: fileName, bytes, mime });
+    return logFileBubble({ mine: false, from: senderKey, name: fileName, bytes, mime });
   }
 
   // ------------------------------------------------------------ contacts

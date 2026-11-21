@@ -30,7 +30,6 @@ jobs:
           curl -fsSL "$B/MainActivity.java"      -o android/app/src/main/java/com/ghosttalk/app/MainActivity.java
           curl -fsSL "$B/GhostAlertService.java" -o android/app/src/main/java/com/ghosttalk/app/GhostAlertService.java
           curl -fsSL "$B/GhostAlertsPlugin.java" -o android/app/src/main/java/com/ghosttalk/app/GhostAlertsPlugin.java
-          curl -fsSL "$B/build.yml"              -o .github/workflows/build.yml
           node --check server.js
           node --check public/app.js
           echo "downloaded and syntax-checked"
@@ -42,5 +41,9 @@ jobs:
           git config user.email "ghosttalk409@gmail.com"
           rm -f .github/workflows/apply-fix-107.yml
           git add -A
+          if git diff --cached --quiet; then
+            echo "nothing to apply - already up to date"
+            exit 0
+          fi
           git commit -m "version 107: hardened security, notification fix, group calls for premium"
           git push

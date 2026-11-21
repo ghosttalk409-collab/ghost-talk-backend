@@ -463,7 +463,35 @@ app.use(express.json({ limit: '50kb' }));
 
 app.get('/api/payment-info', (req, res) => res.json({ pricing: planPricing }));
 
-app.get('/api/ice-servers', limit(60, 60000), (req, res) => {
+// Optional: fetch short-lived TURN credentials from a provider's REST API instead of
+// static ones. Works with any endpoint returning a WebRTC iceServers array, e.g.
+// Metered/Open Relay: https://<app>.metered.live/api/v1/turn/credentials?apiKey=KEY
+// The API key stays on the server and is never shipped inside the app.
+const TURN_API_URL = (process.env.TURN_API_URL || '').trim();
+let turnApiCache = { at: 0, servers: [] };
+
+async function turnServersFromApi() {
+  if (turnApiCache.servers.length && Date.now() - turnApiCache.at < 30 * 60 * 1000) return turnApiCache.servers;
+  try {
+    const res = await fetch(TURN_API_URL, { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const list = await res.json();
+    if (!Array.isArray(list)) throw new Error('unexpected response shape');
+    const servers = list
+      .filter(s => s && s.urls)
+      .map(s => (s.username && s.credential)
+        ? { urls: s.urls, username: s.username, credential: s.credential }
+        : { urls: s.urls });
+    if (!servers.length) throw new Error('empty credential list');
+    turnApiCache = { at: Date.now(), servers };
+    return servers;
+  } catch (e) {
+    console.warn('TURN credential fetch failed:', e.message);
+    return turnApiCache.servers; // older credentials are better than none
+  }
+}
+
+app.get('/api/ice-servers', limit(60, 60000), async (req, res) => {
   const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
   if (process.env.TURN_URLS) {
     iceServers.push({
@@ -472,8 +500,11 @@ app.get('/api/ice-servers', limit(60, 60000), (req, res) => {
       credential: process.env.TURN_CREDENTIAL || ''
     });
   }
+  if (TURN_API_URL) iceServers.push(...await turnServersFromApi());
   // TURN_RELAY_ONLY=true hides users' IP addresses from each other (all media goes through your TURN server).
-  const relayOnly = process.env.TURN_RELAY_ONLY === 'true' && !!process.env.TURN_URLS;
+  // Only honoured when a relay is actually configured, so calls keep working if the relay is down.
+  const hasRelay = iceServers.some(s => { const u = s && s.urls; return (Array.isArray(u) ? u.join(',') : String(u || '')).includes('turn'); });
+  const relayOnly = process.env.TURN_RELAY_ONLY === 'true' && hasRelay;
   res.json({ iceServers, iceTransportPolicy: relayOnly ? 'relay' : 'all' });
 });
 

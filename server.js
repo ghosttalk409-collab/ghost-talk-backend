@@ -243,6 +243,11 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Frame-Options', 'DENY');
+  // The page needs camera/mic for calls and the QR scanner; nothing else. Geolocation, payments and
+  // display capture are switched off for the app origin, so injected code cannot ask for them either.
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=(), payment=(), display-capture=(self)');
+  // Render terminates TLS in front of the app: tell browsers never to downgrade to http again.
+  if (/^https:/i.test(PUBLIC_URL)) res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
   const origin = req.headers.origin;
   if (origin) {
     res.setHeader('Vary', 'Origin');
@@ -280,6 +285,8 @@ function appCsp(req) {
   try { const u = new URL(PUBLIC_URL); extra.add(`${u.protocol}//${u.host}`); extra.add(`${u.protocol === 'https:' ? 'wss' : 'ws'}://${u.host}`); } catch {}
   return [
     "default-src 'self'",
+    // The two QR libraries come from a CDN but are pinned by Subresource Integrity in index.html, so
+    // the browser refuses any other bytes. The startup guard moved to boot.js (no inline script).
     "script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",

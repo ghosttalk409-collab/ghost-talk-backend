@@ -291,29 +291,17 @@
     </div>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-  <script>
-    // If the app script cannot run (missing file, old cached copy, browser too old) say so instead of hanging on "Connecting...".
-    (function () {
-      function fail(why) {
-        if (window.__ghostBooted || window.__ghostFailShown) return;
-        window.__ghostFailShown = true;
-        var s = document.getElementById('status-bar');
-        if (s) { s.textContent = 'App could not start'; s.className = 'status-badge offline'; }
-        var c = document.getElementById('chat-box');
-        if (c) {
-          var d = document.createElement('div');
-          d.className = 'msg sys';
-          d.textContent = 'Ghost Talk could not start (' + why + '). Reload the page. If this keeps happening, a file is missing on the server: app.js, e2ee.js and security.js must all be in the public folder.';
-          c.appendChild(d);
-        }
-      }
-      window.__ghostFail = fail;
-      window.addEventListener('error', function (e) { fail(e && e.message ? e.message : 'script error'); });
-      setTimeout(function () { fail('the app script did not load'); }, 6000);
-    })();
-  </script>
-  <script type="module" src="./app.js?v=4" onerror="window.__ghostFail && window.__ghostFail('could not load app.js or one of its files')"></script>
+  <!-- Pinned with Subresource Integrity. These load from a CDN, but the browser verifies these exact
+       bytes before running them, so a compromised CDN cannot swap in code that reads your identity
+       keys or your decrypted messages. If either hash stops matching, the browser blocks the file. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"
+          integrity="sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"
+          integrity="sha384-hStSInNIZ8ljtOVrmrgf7zdHMapaLBWoSnPTtF0nzsybp4+LuhDz6sHuEVpWIX8o"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <!-- The startup guard is an external file so /app can forbid inline script entirely. -->
+  <script src="./boot.js"></script>
+  <script type="module" src="./app.js?v=4"></script>
 </body>
 </html>

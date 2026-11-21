@@ -4,6 +4,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
@@ -28,6 +29,8 @@ import android.os.PowerManager;
 public class GhostAlertService extends Service {
 
     private static final String CHANNEL_ID = "ghost_keepalive";
+    private static final String MSG_CHANNEL = "ghost_msgs";
+    private static final String CALL_CHANNEL = "ghost_calls";
     private static final int NOTIFICATION_ID = 4701;
     private static final String WAKE_TAG = "GhostTalk:alerts";
     private static final long KEEPALIVE_MS = 4 * 60 * 1000L;    // touch the lock every 4 minutes
@@ -45,10 +48,46 @@ public class GhostAlertService extends Service {
         }
     };
 
+    /**
+     * Creates every channel Ghost Talk uses. Called from MainActivity on launch and from the plugin
+     * before the service starts, so the channels exist (and appear in the system notification
+     * settings) even when a message has not arrived yet.
+     */
+    public static void createChannels(Context ctx) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || ctx == null) return;
+        try {
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) return;
+
+            if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+                NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "Alerts connection", NotificationManager.IMPORTANCE_MIN);
+                ch.setDescription("Keeps Ghost Talk connected so call and message alerts arrive");
+                ch.setShowBadge(false);
+                ch.enableVibration(false);
+                ch.setSound(null, null);
+                nm.createNotificationChannel(ch);
+            }
+            if (nm.getNotificationChannel(MSG_CHANNEL) == null) {
+                NotificationChannel ch = new NotificationChannel(MSG_CHANNEL, "New messages", NotificationManager.IMPORTANCE_HIGH);
+                ch.setDescription("Someone sent you a message (content stays encrypted)");
+                ch.enableVibration(true);
+                nm.createNotificationChannel(ch);
+            }
+            if (nm.getNotificationChannel(CALL_CHANNEL) == null) {
+                NotificationChannel ch = new NotificationChannel(CALL_CHANNEL, "Incoming calls", NotificationManager.IMPORTANCE_HIGH);
+                ch.setDescription("Someone is calling you (content stays encrypted)");
+                ch.enableVibration(true);
+                nm.createNotificationChannel(ch);
+            }
+        } catch (Exception ignored) {
+            // A vendor ROM may restrict channels: the web layer still creates them on demand.
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
-        createChannel();
+        createChannels(this);
         handler = new Handler(Looper.getMainLooper());
     }
 
@@ -114,18 +153,6 @@ public class GhostAlertService extends Service {
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         } catch (Exception ignored) { }
         wakeLock = null;
-    }
-
-    private void createChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        if (nm == null || nm.getNotificationChannel(CHANNEL_ID) != null) return;
-        NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "Alerts connection", NotificationManager.IMPORTANCE_MIN);
-        ch.setDescription("Keeps Ghost Talk connected so call and message alerts arrive");
-        ch.setShowBadge(false);
-        ch.enableVibration(false);
-        ch.setSound(null, null);
-        nm.createNotificationChannel(ch);
     }
 
     private Notification buildNotification() {

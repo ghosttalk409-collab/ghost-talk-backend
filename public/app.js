@@ -871,6 +871,57 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   updateAlertsUI();
 
+  // ------------------------------------------------------------ first-run notification permission
+  // Android 13+ drops every notification until the APP asks for POST_NOTIFICATIONS. That used to
+  // happen only after someone found the bell and pressed "Turn on alerts", so a fresh install never
+  // asked, the system switch stayed OFF and no alert could ever appear. MainActivity now requests it
+  // natively at launch; this makes sure the channels exist and alerts are actually on.
+  async function notificationsAllowed() {
+    if (localNotifications) {
+      try { const p = await localNotifications.checkPermissions(); if (p.display === 'granted') return true; } catch (e) { /* fall through */ }
+    }
+    if (ghostAlerts && ghostAlerts.status) {
+      try { const s = await ghostAlerts.status(); return !!(s && s.notificationsEnabled); } catch (e) { /* ignore */ }
+    }
+    return false;
+  }
+  function showNotificationBanner() {
+    if (!isNative || document.getElementById('gt-notif-banner')) return;
+    const bar = document.createElement('div');
+    bar.id = 'gt-notif-banner';
+    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:150;display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;padding:10px 14px;background:#141817;border-top:1px solid var(--line);color:var(--text);font-size:12px';
+    const txt = document.createElement('span');
+    txt.textContent = '🔕 Notifications are blocked for Ghost Talk. Allow them so calls and messages reach you.';
+    const allow = document.createElement('button'); allow.className = 'btn-green'; allow.textContent = 'Allow';
+    const settings = document.createElement('button'); settings.className = 'btn-secondary'; settings.textContent = 'Open settings';
+    const close = document.createElement('button'); close.className = 'btn-secondary'; close.textContent = '✕';
+    close.onclick = () => bar.remove();
+    allow.onclick = async () => {
+      try { if (localNotifications) await localNotifications.requestPermissions(); } catch (e) { /* ignore */ }
+      if (await notificationsAllowed()) { bar.remove(); await enableAlerts(true); }
+      else if (ghostAlerts && ghostAlerts.openSettings) { try { await ghostAlerts.openSettings(); } catch (e) { /* ignore */ } }
+    };
+    settings.onclick = async () => { try { if (ghostAlerts && ghostAlerts.openSettings) await ghostAlerts.openSettings(); } catch (e) { /* ignore */ } };
+    bar.append(txt, allow, settings, close);
+    document.body.appendChild(bar);
+  }
+  async function ensureAlertsReady() {
+    if (!isNative || (!localNotifications && !ghostAlerts)) return;   // APK built without the notification module
+    if (localNotifications) {
+      try {
+        let perm = await localNotifications.checkPermissions();
+        if (perm.display !== 'granted') perm = await localNotifications.requestPermissions();
+      } catch (e) { /* the native dialog is also requested by MainActivity */ }
+      try {
+        await localNotifications.createChannel({ id: 'ghost_calls', name: 'Incoming calls', description: 'Someone is calling you', importance: 5, visibility: 1, vibration: true });
+        await localNotifications.createChannel({ id: 'ghost_msgs', name: 'New messages', description: 'Someone sent you a message', importance: 4, visibility: 1, vibration: true });
+      } catch (e) { /* channels already exist */ }
+    }
+    if (!(await notificationsAllowed())) { showNotificationBanner(); return; }
+    if (!alertsOn) await enableAlerts(true);
+  }
+  if (isNative) setTimeout(() => { ensureAlertsReady().catch(() => {}); }, 1200);
+
   // ------------------------------------------------------------ websocket
   function safeSend(dataObj) {
     const jsonStr = JSON.stringify(dataObj);

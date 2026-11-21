@@ -7,6 +7,11 @@ on:
       - master
   workflow_dispatch:
 
+# Needed by the last step, which commits the freshly built APK to public/GhostTalk.apk
+# so the "Download Android APK" button always serves a build that contains every fix.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -86,3 +91,23 @@ jobs:
         with:
           name: GhostTalk-Debug-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      # Without this step the download button kept serving an old APK while the fixed build
+      # only existed as a build artifact, so phones kept running the version without alerts.
+      - name: Publish this APK to the download page
+        run: |
+          set -euo pipefail
+          SRC="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$SRC"
+          cp "$SRC" public/GhostTalk.apk
+          ls -l public/GhostTalk.apk
+          git config user.name "ghost-talk-build"
+          git config user.email "ghosttalk409@gmail.com"
+          git add public/GhostTalk.apk
+          if git diff --cached --quiet; then
+            echo "Download page already has this APK"
+            exit 0
+          fi
+          git commit -m "build: publish the newest APK to the download page"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

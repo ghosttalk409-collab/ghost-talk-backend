@@ -128,6 +128,7 @@ async function flush() {
 const clients = new Map();   // accountKey -> ws
 const handles = new Map();   // custom handle -> accountKey
 let adminWs = null;
+let adminFails = 0, adminLockUntil = 0;   // global brake on admin-passphrase guessing
 let planPricing = { monthly: 9.99, yearly: 89.99 };
 const PLAN_DAYS = { monthly: 30, yearly: 365 };
 
@@ -222,16 +223,34 @@ setInterval(() => {
 // ---------------------------------------------------------------- http
 const app = express();
 app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
+// Which origins may call this API. No wildcard: a random website must not be able to read API
+// responses (pricing, ICE/TURN credentials) or post on a user's behalf. The Android app loads its
+// WebView from https://localhost (Capacitor) and must stay allowed, otherwise calls break.
+const APP_ORIGINS = new Set(['https://localhost', 'http://localhost', 'capacitor://localhost']);
+function originAllowed(origin) {
+  if (!origin || typeof origin !== 'string') return false;
+  if (APP_ORIGINS.has(origin) || ALLOWED_ORIGINS.includes(origin)) return true;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;   // local testing on any port
+  for (const base of [PUBLIC_URL, SITE_URL]) {
+    try { if (new URL(base).origin === origin) return true; } catch {}
+  }
+  return false;
+}
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Frame-Options', 'DENY');
   const origin = req.headers.origin;
-  if (origin && (!ALLOWED_ORIGINS.length || ALLOWED_ORIGINS.includes(origin))) {
-    res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGINS.length ? origin : '*');
+  if (origin) {
     res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (originAllowed(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    }
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -277,6 +296,8 @@ app.get('/app', (req, res) => {
 
 app.get('/admin-panel', limit(30, 60000), (req, res) => {
   if (!adminKeyOk(req)) return res.status(404).send('Not Found');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
@@ -414,10 +435,20 @@ app.post('/api/nowpayments-webhook',
 
 // Never serve server-side or admin files from the public folder.
 const BLOCKED_STATIC = /^\/(admin\.html|_env|\.env.*|server[^/]*\.js|package(-lock)?\.json|data\.json.*|capacitor[^/]*\.json)$/i;
+// The old check only looked at the raw path, so "/./admin.html", "//admin.html" or "%2e/admin.html"
+// still reached express.static and served the admin page. Normalise first, then compare the file name.
 app.use((req, res, next) => {
   let p = req.path;
   try { p = decodeURIComponent(p); } catch { return res.status(400).send('Bad request'); }
-  return BLOCKED_STATIC.test(p) ? res.status(404).send('Not Found') : next();
+  let clean = '/';
+  try { clean = path.posix.normalize(p.replace(/\\/g, '/')).toLowerCase(); } catch {}
+  const name = clean.split('/').filter(Boolean).pop() || '';
+  const blocked = BLOCKED_STATIC.test(clean)
+    || ['admin.html', '.env', 'data.json', 'package.json', 'package-lock.json'].includes(name)
+    || name.startsWith('.env')
+    || /^server.*\.js$/.test(name)
+    || /^capacitor.*\.json$/.test(name);
+  return blocked ? res.status(404).send('Not Found') : next();
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -495,6 +526,8 @@ const campaignStats = c => {
 
 app.get('/master-registry', limit(30, 60000), (req, res) => {
   if (!adminKeyOk(req)) return res.status(404).send('Not Found');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   const users = Object.entries(db.accounts)
     .map(([key, a]) => ({ key, registeredAt: a.registeredAt || 0, tier: tierOf(a), ref: a.ref || '' }))
     .sort((x, y) => y.registeredAt - x.registeredAt);
@@ -609,6 +642,16 @@ app.get('/affiliate-registry', limit(60, 60000), (req, res) => {
 </div></div></body></html>`);
 });
 
+// Any error thrown by a route or by the JSON body parser is answered as plain JSON. Without this,
+// Express replies with an HTML page containing the server stack trace when NODE_ENV is not 'production'.
+app.use((err, req, res, next) => {
+  const raw = err && (err.status || err.statusCode);
+  const status = Number.isInteger(raw) && raw >= 400 && raw < 500 ? raw : 400;
+  if (err && err.message) console.warn('Request rejected:', req.method, req.path, '-', err.message);
+  if (res.headersSent) return next(err);
+  res.status(status).json({ success: false, error: 'Bad request' });
+});
+
 // ---------------------------------------------------------------- wake-up push (Android app, optional)
 // A push only says "Incoming secure call" / "New secure message". It carries no names, no text, no keys.
 // The server stays memory-only: it remembers WHO tried to reach an offline user for 2 minutes (RAM) so those
@@ -716,7 +759,11 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, maxPayload: 10 * 1024 * 1024 });
 
 // Plain 'chat' / 'file-transfer' no longer exist: all content travels as opaque end-to-end ciphertext ('e2e-msg').
-const RELAY_TYPES = new Set(['offer', 'answer', 'ice-candidate', 'e2e-key', 'e2e-msg', 'decline', 'end-session', 'text-notify']);
+const RELAY_TYPES = new Set(['offer', 'answer', 'ice-candidate', 'e2e-key', 'e2e-msg', 'decline', 'end-session', 'text-notify',
+  // group calls (Premium host): small signalling messages only, media stays peer-to-peer
+  'group-invite', 'group-accept', 'group-decline', 'group-roster', 'group-offer', 'group-answer', 'group-ice', 'group-end']);
+const GROUP_MAX = 4;                   // 1 host + 3 guests, matches the client mesh limit
+const isGhostKey = v => typeof v === 'string' && /^GHOST-[A-Z0-9]{3,16}$/.test(v);
 const SMALL_PAYLOAD = 24000;          // chat-sized ciphertext, allowed for everyone
 const MAX_PAYLOAD = 7500000;          // ~5 MB file after encryption + base64, Premium only
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
@@ -765,6 +812,48 @@ function relay(ws, data) {
       out.pub = data.pub; out.hid = data.hid; out.reply = !!data.reply;
       if (/^[a-f0-9]{16}$/.test(String(data.saw || ''))) out.saw = data.saw;
       break;
+    // ---- group calls: the server only forwards, it never sees media or keys
+    case 'group-invite':
+      if (!isStr(data.groupId, 64) || !Array.isArray(data.members)) return;
+      if (senderTier !== 'PREMIUM') { send(ws, { type: 'error', message: 'Group calls require Premium.' }); return; }
+      out.groupId = data.groupId;
+      out.hasVideo = !!data.hasVideo;
+      out.members = data.members.filter(isGhostKey).slice(0, GROUP_MAX);
+      if (!out.members.length) return;
+      break;
+    case 'group-accept':
+    case 'group-decline':
+    case 'group-end':
+      if (!isStr(data.groupId, 64)) return;
+      out.groupId = data.groupId;
+      if (isGhostKey(data.me)) out.me = data.me;
+      break;
+    case 'group-roster':
+      if (!isStr(data.groupId, 64) || !Array.isArray(data.members)) return;
+      out.groupId = data.groupId;
+      out.members = data.members.filter(isGhostKey).slice(0, GROUP_MAX);
+      if (isGhostKey(data.me)) out.me = data.me;
+      break;
+    case 'group-offer':
+      if (!isStr(data.groupId, 64) || !isObj(data.offer) || !isStr(data.offer.sdp, 100000)) return;
+      if (data.hasVideo && senderTier !== 'PREMIUM') { send(ws, { type: 'error', message: 'Video calls require Premium.' }); return; }
+      out.groupId = data.groupId;
+      out.offer = { type: 'offer', sdp: data.offer.sdp };
+      out.hasVideo = !!data.hasVideo;
+      if (isGhostKey(data.me)) out.me = data.me;
+      break;
+    case 'group-answer':
+      if (!isStr(data.groupId, 64) || !isObj(data.answer) || !isStr(data.answer.sdp, 100000)) return;
+      out.groupId = data.groupId;
+      out.answer = { type: 'answer', sdp: data.answer.sdp };
+      if (isGhostKey(data.me)) out.me = data.me;
+      break;
+    case 'group-ice':
+      if (!isStr(data.groupId, 64) || !isObj(data.candidate) || JSON.stringify(data.candidate).length > 4000) return;
+      out.groupId = data.groupId;
+      out.candidate = data.candidate;
+      if (isGhostKey(data.me)) out.me = data.me;
+      break;
     case 'e2e-msg':
       // Opaque ciphertext. The server cannot read it; it only enforces size and the Premium file limit.
       if (!isStr(data.payload, MAX_PAYLOAD) || !data.payload) return;
@@ -800,7 +889,13 @@ function handleMessage(ws, data) {
     if (!ADMIN_SECRET) {
       return send(ws, { type: 'admin-error', message: 'ADMIN_SECRET is not set on the server (Render > Environment).' });
     }
+    // Guessing the admin passphrase must not be free: after 40 wrong tries in 15 minutes the
+    // login pauses for everyone (a correct passphrase works again once the pause ends).
+    if (adminLockUntil > Date.now()) {
+      return send(ws, { type: 'admin-error', message: 'Too many failed attempts. Try again in a few minutes.' });
+    }
     if (safeEqual(String(data.secret || ''), ADMIN_SECRET)) {
+      adminFails = 0;
       adminWs = ws; ws.isAdmin = true;
       send(ws, {
         type: 'admin-authenticated', pricing: planPricing, storage: storageMode,
@@ -810,6 +905,12 @@ function handleMessage(ws, data) {
     } else {
       send(ws, { type: 'admin-error', message: 'Unauthorized passphrase.' });
       ws.adminFails = (ws.adminFails || 0) + 1;
+      adminFails++;
+      if (adminFails >= 40) {
+        adminLockUntil = Date.now() + 15 * 60000;
+        adminFails = 0;
+        console.warn('Admin login paused for 15 minutes after repeated failed attempts.');
+      }
       if (ws.adminFails >= 5) ws.close(4003, 'too many attempts');
     }
     return;
@@ -858,6 +959,13 @@ function handleMessage(ws, data) {
     let acc = db.accounts[key];
     if (!acc) {
       acc = db.accounts[key] = { secretHash: hash, tier: 'FREE', expiresAt: null, handle: null, registeredAt: Date.now() };
+      // A brand-new account key always wins over somebody else's custom handle with the same text,
+      // otherwise two different people would show up under one name.
+      if (handles.has(key)) {
+        const owner = handles.get(key);
+        if (owner !== key && db.accounts[owner] && db.accounts[owner].handle === key) db.accounts[owner].handle = null;
+        handles.delete(key);
+      }
       // Attribute the signup to an affiliate campaign (new accounts only, campaign must still be active).
       const ref = typeof data.ref === 'string' ? data.ref.trim().toUpperCase() : '';
       if (/^[A-Z0-9]{6,12}$/.test(ref) && Object.values(db.campaigns).some(c => c.code === ref && Date.now() <= c.expiresAt)) acc.ref = ref;
@@ -946,7 +1054,11 @@ function handleMessage(ws, data) {
   relay(ws, data);
 }
 
-wss.on('connection', ws => {
+wss.on('connection', (ws, req) => {
+  // A random website must not be able to open a socket here (guessing account/admin secrets, or
+  // probing which Ghost IDs are online). The Android app sends no Origin header, so it is unaffected.
+  const wsOrigin = req && req.headers && req.headers.origin;
+  if (wsOrigin && !originAllowed(wsOrigin)) { try { ws.close(4008, 'origin not allowed'); } catch {} return; }
   ws.isAlive = true;
   ws.accountKey = null;
   ws.isAdmin = false;

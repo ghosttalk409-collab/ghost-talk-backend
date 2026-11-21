@@ -1,7 +1,32 @@
-/* Privacy blur when switching apps */
+/* Privacy blur when switching apps (kept for anything still using the old class) */
 body.privacy-blur #video-container {
   filter: blur(25px) brightness(0.2);
   transition: filter 0.1s ease-in-out;
+}
+
+/* Full-screen cover shown while Ghost Talk is not the foreground window.
+   It hides the chat, contact list and photos in the task switcher / alt-tab preview. */
+.gt-privacy-shield {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0f0e;
+  pointer-events: none;
+}
+
+.gt-privacy-shield-text {
+  color: #c5a059;
+  font-family: monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.85;
 }
 
 /* Security Notification Banner */

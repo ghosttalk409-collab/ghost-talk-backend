@@ -601,6 +601,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const delivering = new Set();
   const isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
   const pushPlugin = isNative && window.Capacitor.Plugins ? window.Capacitor.Plugins.PushNotifications : null;
+  // No Firebase: the app raises its own system notifications (LocalNotifications plugin) and keeps
+  // its encrypted connection alive with a small Android foreground service (GhostAlerts plugin).
+  const localNotifications = isNative && window.Capacitor.Plugins ? window.Capacitor.Plugins.LocalNotifications : null;
+  const ghostAlerts = isNative && window.Capacitor.Plugins ? window.Capacitor.Plugins.GhostAlerts : null;
   let serverPush = false;                       // the server has phone alerts configured
   let alertsServerOn = false;                   // this device's token is registered on the server
   let alertsOn = localStorage.getItem('ghost_alerts') === '1';
@@ -704,8 +708,32 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- local notifications while the page is open but in the background (generic text only, never names or content)
   const away = () => document.visibilityState === 'hidden' || (typeof document.hasFocus === 'function' && !document.hasFocus());
   const baseTitle = document.title;
-  function notifyLocal(body) {
-    if (isNative || !away() || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  // Android identifies a notification by its id: sending the same id again REPLACES the previous
+  // alert. The old id was the time in whole seconds, so two alerts inside the same second (a call
+  // right after a message) overwrote each other. Each alert now gets its own id: a random starting
+  // point plus a counter, kept inside the positive 32-bit range Java accepts (1 .. 2147483647).
+  let notificationSeq = 1 + Math.floor(Math.random() * 1000000000);
+  function nextNotificationId() {
+    notificationSeq = (notificationSeq % 2000000000) + 1;   // 1 .. 2000000000, never 0 or negative
+    return notificationSeq;
+  }
+  async function notifyLocal(body, channelId) {
+    if (isNative) {
+      // A real phone notification, raised by the app itself. Text stays generic: never names, never content.
+      if (!alertsOn || !away() || !localNotifications) return;
+      try {
+        await localNotifications.schedule({
+          notifications: [{
+            id: nextNotificationId(),
+            title: 'Ghost Talk',
+            body,
+            channelId: channelId || 'ghost_msgs'
+          }]
+        });
+      } catch (e) { /* if Android refuses, the in-app tone and title change still happen */ }
+      return;
+    }
+    if (!away() || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     try { new Notification('Ghost Talk', { body, tag: 'gt-local', renotify: true }); } catch (e) { /* e.g. Android Chrome needs a service worker */ }
   }
   function announceIncoming() {
@@ -720,30 +748,41 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- phone alerts (Android app): a silent, content-free wake-up. The message itself is never sent through the push service.
   async function enableAlerts(silent) {
-    if (!pushPlugin) return false;
+    if (!isNative) return false;
     try {
-      let perm = await pushPlugin.checkPermissions();
-      if (perm.receive !== 'granted') perm = await pushPlugin.requestPermissions();
-      if (perm.receive !== 'granted') {
-        if (!silent) alert('Notifications are blocked. Allow them for Ghost Talk in your phone settings, then try again.');
-        return false;
+      if (localNotifications) {
+        let perm = await localNotifications.checkPermissions();
+        if (perm.display !== 'granted') perm = await localNotifications.requestPermissions();
+        if (perm.display !== 'granted') {
+          if (!silent) alert('Notifications are blocked. Allow them for Ghost Talk in your phone settings, then try again.');
+          return false;
+        }
+        try {
+          await localNotifications.createChannel({ id: 'ghost_calls', name: 'Incoming calls', description: 'Someone is calling you', importance: 5, visibility: 1, vibration: true });
+          await localNotifications.createChannel({ id: 'ghost_msgs', name: 'New messages', description: 'Someone sent you a message', importance: 4, visibility: 1, vibration: true });
+        } catch (e) { /* channels already exist */ }
+      } else if (!pushPlugin) {
+        return false;                            // this APK was built without the notification module
       }
-      if (pushPlugin.createChannel) {
-        await pushPlugin.createChannel({ id: 'ghost_calls', name: 'Incoming calls', description: 'Someone is trying to call you', importance: 5, visibility: 0, vibration: true });
-        await pushPlugin.createChannel({ id: 'ghost_msgs', name: 'New messages', description: 'Someone is trying to message you', importance: 4, visibility: 0, vibration: true });
+      if (ghostAlerts) {
+        try { await ghostAlerts.start(); } catch (e) { /* keep-alive is best effort */ }
       }
-      if (!pushListening) {
-        pushListening = true;
-        pushPlugin.addListener('registration', t => { if (t && t.value) safeSend({ type: 'push-register', token: t.value }); });
-        pushPlugin.addListener('registrationError', () => logChat('System: Could not register this phone for alerts.'));
-        pushPlugin.addListener('pushNotificationActionPerformed', () => {   // tapping an alert opens the app; make sure we are connected
-          if (!socketOpen()) { reconnectAttempts = 0; initWebSocket(); }
-        });
+      if (pushPlugin) {                          // only active in a Firebase build; harmless otherwise
+        try {
+          if (!pushListening) {
+            pushListening = true;
+            pushPlugin.addListener('registration', t => { if (t && t.value) safeSend({ type: 'push-register', token: t.value }); });
+            pushPlugin.addListener('pushNotificationActionPerformed', () => {
+              if (!socketOpen()) { reconnectAttempts = 0; initWebSocket(); }
+            });
+          }
+          await pushPlugin.register();
+        } catch (e) { /* no Google services in this build: expected */ }
       }
-      await pushPlugin.register();
       alertsOn = true;
       localStorage.setItem('ghost_alerts', '1');
       updateAlertsUI();
+      logChat('System: Alerts on. Ghost Talk will keep a private connection open so you are notified while the app is in the background. No Google services are used.');
       return true;
     } catch (e) {
       if (!silent) alert('Could not turn on alerts: ' + (e && e.message ? e.message : 'unknown error'));
@@ -753,7 +792,8 @@ document.addEventListener('DOMContentLoaded', () => {
   async function disableAlerts() {
     alertsOn = false;
     localStorage.removeItem('ghost_alerts');
-    safeSend({ type: 'push-unregister' });        // the device token is deleted from our server
+    safeSend({ type: 'push-unregister' });        // clears any leftover token on our server
+    try { if (ghostAlerts) await ghostAlerts.stop(); } catch (e) { /* ignore */ }
     try { if (pushPlugin && pushPlugin.unregister) await pushPlugin.unregister(); } catch (e) { /* ignore */ }
     updateAlertsUI();
   }
@@ -765,9 +805,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let alertsSheet = null;
   function alertsStatusText() {
     if (isNative) {
+      if (!localNotifications && !pushPlugin) return 'This APK was built without the notification module, so alerts cannot be switched on. Install the newest Ghost Talk APK from the download link, then try again.';
       if (!alertsOn) return 'Alerts are OFF. You only receive messages and calls while the app is open.';
-      if (!serverPush) return 'Alerts are ON in this app, but the server has no alert service configured yet.';
-      return alertsServerOn ? 'Alerts are ON. You will be notified when someone tries to reach you.' : 'Turning alerts on…';
+      return 'Alerts are ON. Ghost Talk keeps a private connection open so you are told about messages and calls while the app is in the background. Android may still stop the app after long idle periods or on very aggressive battery savers.';
     }
     return 'Background alerts work in the Android app. In this browser you get a sound, a vibration and (if you allow it) a notification while the page is open.';
   }
@@ -964,6 +1004,10 @@ document.addEventListener('DOMContentLoaded', () => {
         logChat(`System: ${msg.message}`);
         break;
       case 'peer-offline': {
+        if (typeof msg.forType === 'string' && msg.forType.indexOf('group-') === 0) {
+          groupPeerOffline(msg.targetKey);
+          break;
+        }
         const ck = contactKeyFor(msg.targetKey) || msg.targetKey;
         if (msg.notified) waitingFor.set(ck, Date.now() + WAIT_MS);       // a silent alert went out: they may open the app soon
         if (msg.forType === 'e2e-key') e2e.peerOffline(msg.targetKey);
@@ -1007,7 +1051,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       case 'offer': {
         if (!msg.senderKey || !msg.offer) return;
-        if (callState !== 'IDLE' || peerConnection) {
+        if (callState !== 'IDLE' || peerConnection || group.active) {
           safeSend({ type: 'decline', targetKey: msg.senderKey });
           return;
         }
@@ -1020,7 +1064,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (callerIdText) callerIdText.textContent = `Secure ${msg.hasVideo ? 'video' : 'audio'} call from ${nameFor(msg.senderKey)}`;
         if (callModal) callModal.style.display = 'flex';
         startRing();
-        notifyLocal('Incoming secure call');
+        notifyLocal('Incoming secure call', 'ghost_calls');
         clearTimeout(ringTimeout);
         ringTimeout = setTimeout(() => { if (callState === 'RINGING') declineIncoming(); }, 45000);
         break;
@@ -1091,6 +1135,16 @@ document.addEventListener('DOMContentLoaded', () => {
           endCall(false, true);
         }
         break;
+
+      // ---- group calls: separate message types, so the 1:1 call path above is untouched
+      case 'group-invite': groupOnInvite(msg); break;
+      case 'group-accept': groupOnAccept(msg); break;
+      case 'group-decline': groupOnDecline(msg); break;
+      case 'group-roster': groupOnRoster(msg); break;
+      case 'group-offer': await groupOnOffer(msg); break;
+      case 'group-answer': await groupOnAnswer(msg); break;
+      case 'group-ice': await groupOnIce(msg); break;
+      case 'group-end': groupOnEnd(msg); break;
     }
   }
 
@@ -1215,6 +1269,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function startCall(wantVideo) {
     if (callState !== 'IDLE') { alert('Call already in progress.'); return; }
+    if (group.active) { alert('End the group call first.'); return; }
     if (!activeCallTarget || !isValidContact(activeCallTarget)) { alert('Select a valid contact first.'); return; }
     if (wantVideo && !isPremiumUser) { openPaymentModal('Video calls are a Premium feature.'); return; }
 
@@ -1392,6 +1447,451 @@ document.addEventListener('DOMContentLoaded', () => {
         btnToggleCam.innerText = camOff ? '📹 Cam Off' : '📹 Cam On';
       }
     };
+  }
+
+  // ------------------------------------------------------------ group calls (mesh, Premium host)
+  // Every participant connects directly to every other participant; the server only relays small
+  // signalling messages, exactly as for a 1:1 call. Media never touches the server and is encrypted
+  // by WebRTC (DTLS-SRTP) between the phones. A Premium account is required to START a group call;
+  // anyone can be invited and join. Free members join with audio only.
+  const GROUP_MAX = 4;                       // 1 host + 3 guests, the practical limit for a phone mesh
+  const group = {
+    active: false, id: '', host: '', members: [], wantVideo: false,
+    localStream: null, peers: new Map(), invite: null, ui: null
+  };
+  const myGroupKey = () => accountKey;
+  // Identity is always the permanent Ghost ID, never the display name, so tie-breaks agree on
+  // every device even when somebody uses a custom handle.
+  const groupIdOf = msg => (typeof msg.me === 'string' && /^GHOST-[A-Z0-9]{3,16}$/.test(msg.me)) ? msg.me : String(msg.senderKey || '');
+  // Exactly one side of each pair opens the connection: the one whose ID sorts first.
+  const groupInitiate = other => String(myGroupKey()).toUpperCase() < String(other).toUpperCase();
+  const groupHasVideo = () => !!(group.localStream && group.localStream.getVideoTracks().length);
+
+  function groupUi() {
+    if (group.ui) return group.ui;
+    const root = document.createElement('div');
+    root.id = 'gt-group-call';
+    root.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;z-index:2147482000;background:#0b0f0e;display:none;flex-direction:column;padding:14px;box-sizing:border-box;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;';
+    const title = document.createElement('div');
+    title.style.cssText = 'font-family:monospace;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#c5a059;';
+    const leave = document.createElement('button');
+    leave.textContent = 'Leave';
+    leave.style.cssText = 'background:#7f1d1d;color:#fff;border:0;border-radius:6px;padding:8px 14px;font-size:13px;';
+    leave.onclick = () => endGroupCall(true);
+    head.append(title, leave);
+    const grid = document.createElement('div');
+    grid.style.cssText = 'flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;align-content:start;overflow:auto;';
+    const controls = document.createElement('div');
+    controls.style.cssText = 'display:flex;gap:8px;justify-content:center;margin-top:10px;';
+    const mic = document.createElement('button');
+    mic.textContent = '🎙️ Mic On';
+    const cam = document.createElement('button');
+    cam.textContent = '📹 Cam On';
+    [mic, cam].forEach(b => { b.style.cssText = 'background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:9px 12px;font-size:12px;'; });
+    mic.onclick = () => {
+      if (!group.localStream) return;
+      const on = group.localStream.getAudioTracks().some(t => t.enabled);
+      group.localStream.getAudioTracks().forEach(t => { t.enabled = !on; });
+      mic.textContent = on ? '🎙️ Mic Off' : '🎙️ Mic On';
+    };
+    cam.onclick = () => {
+      if (!group.localStream) return;
+      const vids = group.localStream.getVideoTracks();
+      if (!vids.length) { cam.textContent = '📹 No camera'; return; }
+      const on = vids.some(t => t.enabled);
+      vids.forEach(t => { t.enabled = !on; });
+      cam.textContent = on ? '📹 Cam Off' : '📹 Cam On';
+    };
+    controls.append(mic, cam);
+    root.append(head, grid, controls);
+    document.body.appendChild(root);
+    group.ui = { root, grid, title, mic, cam, tiles: new Map() };
+    return group.ui;
+  }
+
+  function groupTile(key) {
+    const ui = groupUi();
+    let t = ui.tiles.get(key);
+    if (t) return t;
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:relative;background:#111827;border:1px solid #1f2937;border-radius:8px;overflow:hidden;min-height:120px;display:flex;align-items:center;justify-content:center;';
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.style.cssText = 'width:100%;height:100%;object-fit:cover;background:#000;display:none;';
+    const label = document.createElement('div');
+    label.style.cssText = 'position:absolute;left:6px;bottom:5px;font-family:monospace;font-size:10px;background:rgba(0,0,0,.6);color:#e5e7eb;padding:2px 6px;border-radius:4px;';
+    label.textContent = key === myGroupKey() ? 'You' : nameFor(key);
+    wrap.append(video, label);
+    ui.grid.appendChild(wrap);
+    t = { wrap, video, label };
+    ui.tiles.set(key, t);
+    return t;
+  }
+
+  function groupRefreshUi() {
+    const ui = group.ui;
+    if (!ui) return;
+    ui.title.textContent = `Group call · ${group.members.length || 1}/${GROUP_MAX}`;
+    ui.root.style.display = group.active ? 'flex' : 'none';
+  }
+
+  function groupPeer(key) {
+    let p = group.peers.get(key);
+    if (!p) { p = { key, pc: null, pendingIce: [] }; group.peers.set(key, p); }
+    return p;
+  }
+
+  function groupDropPeer(key) {
+    const p = group.peers.get(key);
+    if (p && p.pc) { try { p.pc.onconnectionstatechange = null; p.pc.close(); } catch (e) { /* already gone */ } }
+    group.peers.delete(key);
+    const ui = group.ui;
+    if (ui && ui.tiles.has(key)) {
+      const t = ui.tiles.get(key);
+      t.video.srcObject = null;
+      t.wrap.remove();
+      ui.tiles.delete(key);
+    }
+    groupRefreshUi();
+  }
+
+  function groupWirePeer(key, pc, p) {
+    group.localStream.getTracks().forEach(track => pc.addTrack(track, group.localStream));
+    pc.onicecandidate = e => {
+      if (e.candidate) safeSend({ type: 'group-ice', groupId: group.id, targetKey: key, candidate: e.candidate, me: accountKey });
+    };
+    pc.ontrack = e => {
+      if (!e.streams || !e.streams[0]) return;
+      const t = groupTile(key);
+      t.video.srcObject = e.streams[0];
+      t.video.style.display = 'block';
+      t.video.play().catch(() => {});
+    };
+    pc.onconnectionstatechange = () => {
+      if (p.pc !== pc) return;
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        logChat(`System: ${nameFor(key)} dropped out of the group call (network).`);
+        groupDropPeer(key);
+      }
+    };
+  }
+
+  async function groupConnect(key) {
+    if (!group.active || !group.localStream) return;
+    const existing = group.peers.get(key);
+    if (existing && existing.pc) return;
+    const p = groupPeer(key);
+    const pc = new RTCPeerConnection(await getRtcConfig());
+    p.pc = pc;
+    groupWirePeer(key, pc, p);
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      safeSend({ type: 'group-offer', groupId: group.id, targetKey: key, offer: { type: 'offer', sdp: offer.sdp }, hasVideo: groupHasVideo(), me: accountKey });
+    } catch (e) { groupDropPeer(key); }
+  }
+
+  async function groupAnswerOffer(key, offerSdp) {
+    const p = groupPeer(key);
+    if (p.pc) return;
+    const pc = new RTCPeerConnection(await getRtcConfig());
+    p.pc = pc;
+    groupWirePeer(key, pc, p);
+    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: offerSdp }));
+    for (const c of p.pendingIce.splice(0)) { try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (e) { /* stale */ } }
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    safeSend({ type: 'group-answer', groupId: group.id, targetKey: key, answer: { type: 'answer', sdp: answer.sdp }, me: accountKey });
+  }
+
+  function groupOnInvite(msg) {
+    if (!msg.groupId || !Array.isArray(msg.members)) return;
+    const hostKey = groupIdOf(msg);
+    if (!hostKey || callState !== 'IDLE' || group.active) {
+      if (hostKey) safeSend({ type: 'group-decline', groupId: msg.groupId, targetKey: hostKey, me: accountKey });
+      return;
+    }
+    group.invite = { id: msg.groupId, host: hostKey, hasVideo: !!msg.hasVideo, members: msg.members.filter(m => typeof m === 'string').slice(0, GROUP_MAX) };
+    groupShowInvite();
+    notifyLocal('Incoming group call', 'ghost_calls');
+    startRing();
+    setTimeout(() => { if (group.invite && group.invite.id === msg.groupId) declineGroupInvite(); }, 45000);
+  }
+
+  function groupOnAccept(msg) {
+    if (!group.active || msg.groupId !== group.id) return;
+    const key = groupIdOf(msg);
+    if (key && !group.members.some(m => m.toUpperCase() === key.toUpperCase()) && group.members.length < GROUP_MAX) group.members.push(key);
+    groupBroadcastRoster();
+    groupTile(key);
+    groupRefreshUi();
+    logChat(`System: ${nameFor(key)} joined the group call.`);
+    if (groupInitiate(key)) groupConnect(key);
+  }
+
+  function groupOnDecline(msg) {
+    if (!group.active || msg.groupId !== group.id) return;
+    const key = groupIdOf(msg);
+    group.members = group.members.filter(m => m.toUpperCase() !== key.toUpperCase());
+    groupBroadcastRoster();
+    groupRefreshUi();
+    logChat(`System: ${nameFor(key)} declined the group call.`);
+  }
+
+  function groupBroadcastRoster() {
+    const members = group.members.slice(0, GROUP_MAX);
+    for (const m of members) {
+      if (m.toUpperCase() === String(myGroupKey()).toUpperCase()) continue;
+      safeSend({ type: 'group-roster', groupId: group.id, targetKey: m, members, me: accountKey });
+    }
+  }
+
+  function groupOnRoster(msg) {
+    if (!group.active || msg.groupId !== group.id || !Array.isArray(msg.members)) return;
+    group.members = msg.members.filter(m => typeof m === 'string').slice(0, GROUP_MAX);
+    groupRefreshUi();
+    for (const m of group.members) {
+      if (m.toUpperCase() === String(myGroupKey()).toUpperCase()) continue;
+      if (!group.peers.has(m) && groupInitiate(m)) groupConnect(m);
+    }
+  }
+
+  async function groupOnOffer(msg) {
+    if (!group.active || msg.groupId !== group.id || !msg.offer || typeof msg.offer.sdp !== 'string') return;
+    const key = groupIdOf(msg);
+    if (!key) return;
+    const p = group.peers.get(key);
+    if (p && p.pc) return;                       // already connected; ignore a duplicate offer
+    groupTile(key);
+    groupRefreshUi();
+    try { await groupAnswerOffer(key, msg.offer.sdp); }
+    catch (e) { groupDropPeer(key); }
+  }
+
+  async function groupOnAnswer(msg) {
+    if (!group.active || msg.groupId !== group.id || !msg.answer || typeof msg.answer.sdp !== 'string') return;
+    const p = group.peers.get(groupIdOf(msg));
+    if (!p || !p.pc || p.pc.remoteDescription) return;
+    try {
+      await p.pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: msg.answer.sdp }));
+      for (const c of p.pendingIce.splice(0)) { try { await p.pc.addIceCandidate(new RTCIceCandidate(c)); } catch (e) { /* stale */ } }
+    } catch (e) { groupDropPeer(p.key); }
+  }
+
+  async function groupOnIce(msg) {
+    if (!group.active || msg.groupId !== group.id || !msg.candidate) return;
+    const p = group.peers.get(groupIdOf(msg));
+    if (!p) return;
+    if (p.pc && p.pc.remoteDescription) { try { await p.pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch (e) { /* stale */ } }
+    else p.pendingIce.push(msg.candidate);
+  }
+
+  function groupOnEnd(msg) {
+    if (group.invite && msg.groupId === group.invite.id) { group.invite = null; groupHideInvite(); stopRing(); return; }
+    if (!group.active || msg.groupId !== group.id) return;
+    const key = groupIdOf(msg);
+    if (key.toUpperCase() === String(group.host).toUpperCase()) {
+      logChat('System: The host ended the group call.');
+      endGroupCall(false);
+      return;
+    }
+    groupDropPeer(key);
+    group.members = group.members.filter(m => m.toUpperCase() !== key.toUpperCase());
+    groupRefreshUi();
+    logChat(`System: ${nameFor(key)} left the group call.`);
+  }
+
+  function groupPeerOffline(targetKey) {
+    if (!group.active) return;
+    const key = String(targetKey || '').toUpperCase();
+    const member = group.members.find(m => m.toUpperCase() === key || (contactKeyFor(m) || '').toUpperCase() === key);
+    if (member) groupDropPeer(member);
+  }
+
+  let groupInviteBox = null;
+  function groupShowInvite() {
+    if (!group.invite) return;
+    if (!groupInviteBox) {
+      const box = document.createElement('div');
+      box.id = 'gt-group-invite';
+      box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2147482500;background:#0f172a;border:1px solid #c5a059;border-radius:10px;padding:18px;width:min(86vw,320px);text-align:center;font-family:system-ui,sans-serif;color:#e5e7eb;box-shadow:0 10px 40px rgba(0,0,0,.6);display:none;';
+      const text = document.createElement('div');
+      text.id = 'gt-group-invite-text';
+      text.style.cssText = 'font-size:14px;line-height:1.5;margin-bottom:14px;';
+      const yes = document.createElement('button');
+      yes.textContent = 'Join';
+      yes.style.cssText = 'background:#065f46;color:#fff;border:0;border-radius:6px;padding:10px 18px;margin-right:8px;font-size:14px;';
+      yes.onclick = joinGroupCall;
+      const no = document.createElement('button');
+      no.textContent = 'Decline';
+      no.style.cssText = 'background:#374151;color:#fff;border:0;border-radius:6px;padding:10px 18px;font-size:14px;';
+      no.onclick = declineGroupInvite;
+      box.append(text, yes, no);
+      document.body.appendChild(box);
+      groupInviteBox = box;
+    }
+    const inv = group.invite;
+    groupInviteBox.querySelector('#gt-group-invite-text').textContent =
+      `${nameFor(inv.host)} is starting a ${inv.hasVideo ? 'video' : 'audio'} group call (${inv.members.length} people).`;
+    groupInviteBox.style.display = 'block';
+  }
+  function groupHideInvite() { if (groupInviteBox) groupInviteBox.style.display = 'none'; }
+
+  function declineGroupInvite() {
+    const inv = group.invite;
+    group.invite = null;
+    groupHideInvite();
+    stopRing();
+    if (inv) safeSend({ type: 'group-decline', groupId: inv.id, targetKey: inv.host, me: accountKey });
+  }
+
+  async function joinGroupCall() {
+    const inv = group.invite;
+    if (!inv) return;
+    if (callState !== 'IDLE') { declineGroupInvite(); return; }
+    group.invite = null;
+    groupHideInvite();
+    stopRing();
+    const withVideo = inv.hasVideo && isPremiumUser;   // free members join with audio only
+    try {
+      group.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: withVideo ? { width: { ideal: 640 }, height: { ideal: 480 } } : false
+      });
+    } catch (e) {
+      safeSend({ type: 'group-decline', groupId: inv.id, targetKey: inv.host, me: accountKey });
+      alert('Microphone/Camera access required.');
+      return;
+    }
+    group.active = true;
+    group.id = inv.id;
+    group.host = inv.host;
+    group.wantVideo = withVideo;
+    // Only the host and me for now; the host sends the full roster of people who actually joined.
+    // (Connecting to invitees who never accepted would just produce failed peer connections.)
+    group.members = [inv.host, myGroupKey()];
+    groupTile(myGroupKey()).video.srcObject = group.localStream;
+    if (withVideo) groupTile(myGroupKey()).video.style.display = 'block';
+    groupRefreshUi();
+    safeSend({ type: 'group-accept', groupId: inv.id, targetKey: inv.host, me: accountKey });
+    logChat('System: Joined the group call.');
+  }
+
+  async function startGroupCall(keys, wantVideo) {
+    if (!isPremiumUser) { openPaymentModal('Group calls are a Premium feature.'); return; }
+    if (callState !== 'IDLE' || group.active) { alert('Another call is already in progress.'); return; }
+    const invitees = (keys || []).slice(0, GROUP_MAX - 1);
+    if (!invitees.length) { alert('Choose at least one contact.'); return; }
+    try {
+      group.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: wantVideo ? { width: { ideal: 640 }, height: { ideal: 480 } } : false
+      });
+    } catch (e) {
+      alert('Microphone/Camera access required.');
+      return;
+    }
+    group.active = true;
+    group.id = randomHex(8);
+    group.host = myGroupKey();
+    group.wantVideo = !!wantVideo;
+    group.members = [myGroupKey()];        // grows as each person accepts
+    groupTile(myGroupKey()).video.srcObject = group.localStream;
+    if (wantVideo) groupTile(myGroupKey()).video.style.display = 'block';
+    groupRefreshUi();
+    // The invite carries the intended line-up so the person sees who they would be joining.
+    const lineUp = [myGroupKey(), ...invitees];
+    for (const key of invitees) {
+      safeSend({ type: 'group-invite', groupId: group.id, targetKey: key, members: lineUp, hasVideo: !!wantVideo, me: accountKey });
+    }
+    logChat('System: Group call started — waiting for people to join.');
+  }
+
+  function endGroupCall(notify = true) {
+    if (!group.active) return;
+    if (notify) {
+      for (const key of group.peers.keys()) safeSend({ type: 'group-end', groupId: group.id, targetKey: key, me: accountKey });
+    }
+    for (const key of [...group.peers.keys()]) groupDropPeer(key);
+    if (group.localStream) { group.localStream.getTracks().forEach(t => t.stop()); group.localStream = null; }
+    group.active = false;
+    group.id = '';
+    group.host = '';
+    group.members = [];
+    group.wantVideo = false;
+    const ui = group.ui;
+    if (ui) { ui.grid.innerHTML = ''; ui.tiles.clear(); ui.root.style.display = 'none'; }
+    logChat('System: Group call ended.');
+  }
+
+  function openGroupPicker() {
+    if (!isPremiumUser) { openPaymentModal('Group calls are a Premium feature.'); return; }
+    if (callState !== 'IDLE' || group.active) { alert('Another call is already in progress.'); return; }
+    if (!ramContacts.length) { alert('Add a contact first.'); return; }
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2147482500;background:#0f172a;border:1px solid #374151;border-radius:10px;padding:16px;width:min(90vw,340px);max-height:80vh;overflow:auto;font-family:system-ui,sans-serif;color:#e5e7eb;box-shadow:0 10px 40px rgba(0,0,0,.6);';
+    const head = document.createElement('div');
+    head.textContent = 'Start a group call';
+    head.style.cssText = 'font-family:monospace;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#c5a059;margin-bottom:8px;';
+    const hint = document.createElement('div');
+    hint.textContent = `Choose up to ${GROUP_MAX - 1} contacts. You are the host.`;
+    hint.style.cssText = 'font-size:11px;color:#9ca3af;margin-bottom:10px;';
+    box.append(head, hint);
+    const chosen = new Set();
+    ramContacts.forEach(c => {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 0;font-size:13px;';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.onchange = () => {
+        if (cb.checked) { if (chosen.size >= GROUP_MAX - 1) { cb.checked = false; return; } chosen.add(c.key); }
+        else chosen.delete(c.key);
+      };
+      const name = document.createElement('span');
+      name.textContent = c.name;
+      row.append(cb, name);
+      box.appendChild(row);
+    });
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:8px;margin-top:14px;';
+    const audio = document.createElement('button');
+    audio.textContent = '🎙️ Audio';
+    const video = document.createElement('button');
+    video.textContent = '📹 Video';
+    [audio, video].forEach(b => { b.style.cssText = 'flex:1;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:10px;font-size:13px;'; });
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Cancel';
+    cancel.style.cssText = 'background:#374151;color:#fff;border:0;border-radius:6px;padding:10px 14px;font-size:13px;';
+    cancel.onclick = () => box.remove();
+    const go = wantVideo => {
+      if (!chosen.size) { alert('Choose at least one contact.'); return; }
+      box.remove();
+      startGroupCall([...chosen], wantVideo);
+    };
+    audio.onclick = () => go(false);
+    video.onclick = () => go(true);
+    actions.append(audio, video, cancel);
+    box.appendChild(actions);
+    document.body.appendChild(box);
+  }
+
+  {
+    const btnGroupCall = document.createElement('button');
+    btnGroupCall.id = 'btn-group-call';
+    btnGroupCall.className = 'tier-badge';
+    btnGroupCall.title = 'Group call (Premium)';
+    btnGroupCall.textContent = '👥 Group';
+    const row = (btnCallVideo && btnCallVideo.parentElement) || (btnCallAudio && btnCallAudio.parentElement);
+    if (row) row.appendChild(btnGroupCall);
+    else {
+      btnGroupCall.style.cssText = 'position:fixed;right:12px;bottom:78px;z-index:9998;background:#111827;color:#c5a059;border:1px solid #374151;border-radius:999px;padding:9px 14px;font-size:12px;';
+      document.body.appendChild(btnGroupCall);
+    }
+    btnGroupCall.onclick = openGroupPicker;
   }
 
   // ------------------------------------------------------------ chat + files
